@@ -57,36 +57,37 @@ Below is the directory map of the DeadDrop application codebase:
 
 ```
 DeadDrop/
+├── backend/                # 🐍 Python AI/ML backend source code
+│   └── agents/             # Modular agent implementations
+│       ├── wellness_agent.py      # Agent 06 (LangGraph StateGraph + HuggingFace)
+│       ├── grace_agent.py         # Agent 07 (LangGraph + ChromaDB Exception RAG)
+│       ├── readiness_agent.py     # Agent 02 (LangGraph Trustee Readiness & Backups)
+│       ├── escalation_agent.py    # Agent 08 (SMTP Email & Twilio SMS Alerts Dispatcher)
+│       ├── executor_agent.py      # Agent 11 (LangChain + ChromaDB instructions RAG)
+│       └── cron_sweeper.py        # Background database countdown sweeping daemon
 ├── public/                 # Static assets, icons, and configuration assets
-│   └── favicon.ico         # App browser tab icon
+│   └── deaddrop_hero_bg.png # Premium volumetric vault chamber hero background
 ├── src/
 │   ├── assets/             # Global media and image assets
 │   ├── components/         # Reusable presentation and utility components
 │   │   ├── FilmGrain.jsx         # Applies a continuous subtle noise overlay across all views
 │   │   ├── PageTransition.jsx    # Executes sharp, high-speed page transition cuts
 │   │   └── CountdownRing.jsx     # Visualizes check-in countdown progress on the dashboard
-│   ├── context/            # React global context providers
-│   │   └── VaultContext.jsx      # Manages user session state, local Web Crypto calls, and agent triggers
-│   ├── pages/              # Routing-level view components
-│   │   ├── Landing.jsx           # Hero splash, core product pitch, and key-splitting animation
-│   │   ├── Auth.jsx              # Google OAuth and user credential setup screens
-│   │   ├── SetupWizard.jsx       # Multi-step capsule configuration wizard with Onboarding Health Agent scoring
-│   │   ├── Dashboard.jsx         # Primary briefing console showing file health and countdown status
-│   │   ├── FileManager.jsx       # Local AES-GCM file encryption panel and storage uploads
-│   │   ├── Trustees.jsx          # Trustees directory displaying status and connection linkages
-│   │   ├── EmergencyContacts.jsx # Configuration panel for emergency verification contacts
-│   │   ├── CheckIn.jsx           # Conversational AI dialogue interface for verification check-ins
-│   │   ├── AgentLogs.jsx         # Live console streaming real-time background agent logs
-│   │   ├── Settings.jsx          # System configuration, intervals, and travel exception logs
-│   │   ├── TrusteePortal.jsx     # Gateway for trustees to submit key shards and retrieve documents
-│   │   └── SecurityAlert.jsx     # Lockdown alert overlay triggered upon suspected intrusion
+│   ├── pages/              # Routing-level React view pages
+│   │   ├── Landing.jsx           # Splash screen with premium vault hero graphics
+│   │   ├── Auth.jsx              # Google OAuth login portal with eye toggles
+│   │   ├── Setup.jsx             # Wizard setup with live Agent 01 logger
+│   │   ├── Dashboard.jsx         # Cockpit with live check-in timer countdown rings
+│   │   ├── Checkin.jsx           # Keystroke analytics wellness console chat
+│   │   ├── Agents.jsx            # Live logging matrix for all 11 Agents
+│   │   ├── TrusteeDecrypt.jsx    # Client-side decryption dashboard
+│   │   └── TrusteeGuidance.jsx   # Trustee instructions Q&A search panel
 │   ├── App.jsx             # Router definition and layout definitions
-│   ├── index.css           # Tailwind configuration overrides, typography imports, and styling layers
-│   └── main.jsx            # Application mount point and React bootstrap code
-├── tailwind.config.js      # Customizes colors (Swiss Banking Indigo), font family mappings, and layouts
-├── postcss.config.js       # Auto-prefixes CSS files during construction
-├── vite.config.js          # Vite compiler and development server options
-└── package.json            # Managed list of node dependencies and script definitions
+│   └── index.css           # Global custom styled layers
+├── main.py                 # FastAPI Python server entrypoint (at root level)
+├── requirements.txt        # Python backend package dependencies (at root level)
+├── venv/                   # Python Virtual Environment (at root level)
+└── package.json            # Vite React dependencies and scripts
 ```
 
 ---
