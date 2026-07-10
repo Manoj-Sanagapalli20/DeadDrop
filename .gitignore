@@ -28,3 +28,4 @@ future.md
 .env
 .env.local
 .env.*
+venv 

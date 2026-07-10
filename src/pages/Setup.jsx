@@ -1,19 +1,20 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Shield, Key, FileText, ChevronRight, ChevronLeft, Upload, Users, Phone, Clock, FileLock2, RefreshCw, Download } from 'lucide-react';
 import FilmGrain from '../components/FilmGrain';
 import Logo from '../components/Logo';
-import { 
-  generateAESKeyBytes, 
-  splitSecret, 
-  encryptFile, 
-  bytesToHex, 
-  generateRSAKeyPair, 
-  rsaEncrypt, 
-  exportKeyJWK 
+import {
+  generateAESKeyBytes,
+  splitSecret,
+  encryptFile,
+  bytesToHex,
+  generateRSAKeyPair,
+  rsaEncrypt,
+  exportKeyJWK
 } from '../utils/crypto';
 import { supabase } from '../utils/supabaseClient';
+import { onboardingHealthChain } from '../../agents';
 
 export default function Setup() {
   const navigate = useNavigate();
@@ -22,11 +23,11 @@ export default function Setup() {
   const [step, setStep] = useState(1);
   const [fileUploaded, setFileUploaded] = useState(false);
   const [fileName, setFileName] = useState('');
-  
+
   // Real cryptographic states
   const [encryptedPayload, setEncryptedPayload] = useState(null);
   const [encryptionIv, setEncryptionIv] = useState(null);
-  
+
   // Asymmetric trustee keys generated on file upload
   const [trusteeKeys, setTrusteeKeys] = useState(null); // { 1: keyPair, 2: keyPair, 3: keyPair }
   const [encryptedShards, setEncryptedShards] = useState([]); // Array of { x, hex, privateKeyJWK }
@@ -39,12 +40,17 @@ export default function Setup() {
   const [t3Email, setT3Email] = useState('rohan@iyer.in');
   const [contactName, setContactName] = useState('');
   const [contactPhone, setContactPhone] = useState('');
-  const [timerDays, setTimerDays] = useState(30);
+  const [timerDays, setTimerDays] = useState(7);
   const [instructions, setInstructions] = useState('');
-  
+
   // DB Save states
   const [sealing, setSealing] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
+
+  // Agent 01 live diagnostics console state
+  const [agent1Logs, setAgent1Logs] = useState([
+    "Scoring engine online. Awaiting variables..."
+  ]);
 
   // Calculate readiness score
   const calculateScore = () => {
@@ -55,6 +61,25 @@ export default function Setup() {
     if (instructions.length > 20) score += 15;
     return score;
   };
+
+  // Agent 01 Real-Time LangChain Diagnostics Hook
+  useEffect(() => {
+    const runHealthChain = async () => {
+      try {
+        const result = await onboardingHealthChain.invoke({
+          fileUploaded: fileUploaded ? "true" : "false",
+          trusteeCount: (t1Email && t2Email && t3Email) ? "3" : "0",
+          hasEmergencyContact: (contactName && contactPhone) ? "true" : "false",
+          instructionsLength: instructions.length.toString()
+        });
+        setAgent1Logs(result.logs);
+      } catch (err) {
+        console.error("LangChain Health Chain execution failed:", err);
+      }
+    };
+
+    runHealthChain();
+  }, [fileUploaded, t1Email, t2Email, t3Email, contactName, contactPhone, instructions]);
 
   const handleNext = () => {
     if (step < 5) setStep(step + 1);
@@ -118,7 +143,7 @@ export default function Setup() {
           { x: 2, hex: bytesToHex(encShard2), privateKeyJWK: jwkPriv2 },
           { x: 3, hex: bytesToHex(encShard3), privateKeyJWK: jwkPriv3 }
         ];
-        
+
         setEncryptedShards(formattedShards);
 
         // Save encrypted payload and metadata to session storage for same-tab test shortcut
@@ -140,8 +165,8 @@ export default function Setup() {
 
   // Download key file containing the encrypted shard + the private key needed to open it
   const downloadShard = (xVal, encHexData, jwkPrivKey, trusteeName) => {
-    const blob = new Blob([JSON.stringify({ 
-      x: xVal, 
+    const blob = new Blob([JSON.stringify({
+      x: xVal,
       key: encHexData, // Encrypted shard
       privateKey: jwkPrivKey, // Trustee's private key to unwrap it
       owner: trusteeName,
@@ -237,8 +262,8 @@ export default function Setup() {
       {/* HEADER */}
       <header className="fixed top-0 left-0 right-0 z-50 bg-[#030304]/75 backdrop-blur-md border-b border-white/5 py-4 px-6 md:px-12 flex justify-between items-center shadow-lg">
         <Logo />
-        <Link 
-          to="/dashboard" 
+        <Link
+          to="/dashboard"
           className="px-3 py-1 border border-white/10 rounded-full bg-white/[0.02] hover:bg-white/5 hover:border-white/20 text-textMuted hover:text-white transition-all text-[10px] font-semibold"
         >
           Cancel Setup
@@ -247,10 +272,10 @@ export default function Setup() {
 
       {/* MAIN CONTAINER */}
       <main className="relative z-10 flex-grow max-w-5xl mx-auto w-full px-6 pt-24 pb-16 grid md:grid-cols-12 gap-8 items-stretch">
-        
+
         {/* LEFT COLUMN: ACTIVE STEP FORM */}
         <div className="md:col-span-8 flex flex-col justify-between bg-[#08080B]/80 border border-white/5 rounded-2xl p-6 glass-panel relative overflow-hidden">
-          
+
           <div className="flex flex-col gap-6 text-left">
             {/* Step header */}
             <div className="flex justify-between items-center border-b border-white/5 pb-3 text-[10px] text-textMuted uppercase tracking-wider font-semibold">
@@ -267,7 +292,7 @@ export default function Setup() {
             {/* Stepper Forms */}
             <AnimatePresence mode="wait">
               {step === 1 && (
-                <motion.div 
+                <motion.div
                   key="step1"
                   initial={{ opacity: 0, x: 10 }}
                   animate={{ opacity: 1, x: 0 }}
@@ -278,16 +303,16 @@ export default function Setup() {
                   <p className="text-textMuted text-xs leading-relaxed font-light">
                     Upload the critical files you wish to secure. Files are encrypted locally in your browser using AES-GCM 256-bit before being uploaded to secure AWS relay storage. We cannot read them.
                   </p>
-                  
+
                   {/* Hidden Input File */}
-                  <input 
-                    type="file" 
-                    ref={fileInputRef} 
-                    onChange={handleFileChange} 
-                    className="hidden" 
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    className="hidden"
                   />
 
-                  <div 
+                  <div
                     onClick={triggerFileInput}
                     className="border border-dashed border-white/10 hover:border-white/30 rounded-xl p-10 flex flex-col items-center justify-center text-center bg-white/[0.005] hover:bg-white/[0.015] cursor-pointer transition-all duration-300"
                   >
@@ -304,7 +329,7 @@ export default function Setup() {
 
                   {/* Shard Download Dashboard for interactive local test */}
                   {fileUploaded && encryptedShards.length > 0 && (
-                    <motion.div 
+                    <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       className="bg-white/[0.02] border border-white/5 p-4 rounded-xl flex flex-col gap-3 mt-2"
@@ -315,21 +340,21 @@ export default function Setup() {
                       <p className="text-[10px] text-textMuted font-light leading-relaxed">
                         To test the local decryption pipeline later, download the key files and payload below:
                       </p>
-                      
+
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <button 
+                        <button
                           onClick={() => downloadShard(1, encryptedShards[0].hex, encryptedShards[0].privateKeyJWK, t1Name)}
                           className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] text-white flex items-center justify-center gap-1.5 cursor-pointer uppercase transition-colors"
                         >
                           <Download className="w-3 h-3" /> Shard 1 ({t1Name.split(' ')[0]})
                         </button>
-                        <button 
+                        <button
                           onClick={() => downloadShard(2, encryptedShards[1].hex, encryptedShards[1].privateKeyJWK, t2Name)}
                           className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] text-white flex items-center justify-center gap-1.5 cursor-pointer uppercase transition-colors"
                         >
                           <Download className="w-3 h-3" /> Shard 2 ({t2Name.split(' ')[0]})
                         </button>
-                        <button 
+                        <button
                           onClick={() => downloadShard(3, encryptedShards[2].hex, encryptedShards[2].privateKeyJWK, t3Name)}
                           className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] text-white flex items-center justify-center gap-1.5 cursor-pointer uppercase transition-colors"
                         >
@@ -337,7 +362,7 @@ export default function Setup() {
                         </button>
                       </div>
 
-                      <button 
+                      <button
                         onClick={downloadEncryptedPayload}
                         className="w-full mt-1.5 py-2 bg-white/10 hover:bg-white/15 border border-white/10 rounded-lg text-[9px] text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer uppercase transition-colors"
                       >
@@ -349,7 +374,7 @@ export default function Setup() {
               )}
 
               {step === 2 && (
-                <motion.div 
+                <motion.div
                   key="step2"
                   initial={{ opacity: 0, x: 10 }}
                   animate={{ opacity: 1, x: 0 }}
@@ -360,7 +385,7 @@ export default function Setup() {
                   <p className="text-textMuted text-xs leading-relaxed font-light">
                     Designate 3 trustees. The master decryption key will be split into 3 shares using Shamir's Secret Sharing (2-of-3 keys required to reconstruct).
                   </p>
-                  
+
                   <div className="flex flex-col gap-3 text-[10px] font-semibold uppercase">
                     <div className="flex flex-col gap-1.5">
                       <label className="text-textMuted tracking-wider">Trustee 1 Name & Email</label>
@@ -390,7 +415,7 @@ export default function Setup() {
               )}
 
               {step === 3 && (
-                <motion.div 
+                <motion.div
                   key="step3"
                   initial={{ opacity: 0, x: 10 }}
                   animate={{ opacity: 1, x: 0 }}
@@ -401,11 +426,11 @@ export default function Setup() {
                   <p className="text-textMuted text-xs leading-relaxed font-light">
                     If you miss your check-in, we will text/call emergency contacts before releasing files. If any contact replies YES, the switch is immediately cancelled.
                   </p>
-                  
+
                   <div className="flex flex-col gap-3 text-[10px] font-semibold uppercase">
                     <div className="flex flex-col gap-1.5 text-left">
                       <label className="text-textMuted tracking-wider">Contact Name</label>
-                      <input 
+                      <input
                         type="text"
                         placeholder="Vijay Sharma"
                         value={contactName}
@@ -416,7 +441,7 @@ export default function Setup() {
 
                     <div className="flex flex-col gap-1.5 text-left">
                       <label className="text-textMuted tracking-wider">Verification Mobile Number</label>
-                      <input 
+                      <input
                         type="tel"
                         placeholder="+91 98765 43210"
                         value={contactPhone}
@@ -429,7 +454,7 @@ export default function Setup() {
               )}
 
               {step === 4 && (
-                <motion.div 
+                <motion.div
                   key="step4"
                   initial={{ opacity: 0, x: 10 }}
                   animate={{ opacity: 1, x: 0 }}
@@ -440,13 +465,13 @@ export default function Setup() {
                   <p className="text-textMuted text-xs leading-relaxed font-light">
                     Define the wellness check-in frequency. If you fail to verify wellness within this window, the multi-channel escalation process kicks off.
                   </p>
-                  
+
                   <div className="flex flex-col gap-6 py-4 font-semibold">
                     <div className="flex justify-between items-center text-xs">
                       <span>Check-in Interval:</span>
                       <span className="text-white font-bold">{timerDays} Days</span>
                     </div>
-                    <input 
+                    <input
                       type="range"
                       min="7"
                       max="90"
@@ -462,7 +487,7 @@ export default function Setup() {
               )}
 
               {step === 5 && (
-                <motion.div 
+                <motion.div
                   key="step5"
                   initial={{ opacity: 0, x: 10 }}
                   animate={{ opacity: 1, x: 0 }}
@@ -473,8 +498,8 @@ export default function Setup() {
                   <p className="text-textMuted text-xs leading-relaxed font-light">
                     Write detailed instructions explaining what the decrypted files are and how your family/trustees should use them. Our AI assistant will query these instructions to answer their questions post-release.
                   </p>
-                  
-                  <textarea 
+
+                  <textarea
                     rows="6"
                     placeholder="Provide details about locker keys, seeds, and key documents here..."
                     value={instructions}
@@ -488,7 +513,7 @@ export default function Setup() {
 
           {/* Form Actions */}
           <div className="flex justify-between items-center border-t border-white/5 pt-6 mt-6">
-            <button 
+            <button
               onClick={handlePrev}
               disabled={step === 1}
               className="px-5 py-2.5 border border-white/10 bg-white/[0.01] hover:bg-white/5 hover:border-white/20 text-xs font-semibold uppercase rounded-full flex items-center gap-1.5 transition-colors cursor-pointer"
@@ -497,14 +522,14 @@ export default function Setup() {
             </button>
 
             {step < 5 ? (
-              <button 
+              <button
                 onClick={handleNext}
                 className="px-5 py-2.5 bg-white hover:bg-zinc-200 text-black text-xs font-bold uppercase rounded-full flex items-center gap-1.5 transition-colors cursor-pointer border-0"
               >
                 Next Step <ChevronRight className="w-3.5 h-3.5" />
               </button>
             ) : (
-              <button 
+              <button
                 onClick={handleSealVault}
                 disabled={sealing || !fileUploaded}
                 className="px-6 py-3 bg-white hover:bg-zinc-200 text-black text-xs font-bold uppercase rounded-full flex items-center gap-2 cursor-pointer shadow-lg border-0 disabled:opacity-40"
@@ -534,11 +559,11 @@ export default function Setup() {
         </div>
 
         {/* RIGHT COLUMN: REAL-TIME HEALTH STATUS */}
-        <div className="md:col-span-4 flex flex-col gap-6">
-          
+        <div className="md:col-span-4 flex flex-col gap-6 font-sans">
+
           {/* Real-time Vault Score visualizer (Agent 01) */}
           <div className="bg-[#0C0C14]/50 border border-white/5 rounded-2xl p-5 text-left flex flex-col gap-5 shadow-lg backdrop-blur-sm glass-card relative overflow-hidden">
-            
+
             <div className="border-b border-white/5 pb-2 text-[10px] text-textMuted uppercase flex justify-between font-semibold">
               <span>Agent 01 Diagnostics</span>
               <span>Scoring Engine</span>
@@ -568,6 +593,21 @@ export default function Setup() {
               <div className="flex items-center gap-2.5">
                 <span className={`w-1.5 h-1.5 rounded-full ${instructions.length > 20 ? 'bg-forestGreen' : 'bg-[#EF4444]'}`} />
                 <span className={instructions.length > 20 ? 'text-textWhite' : 'text-textMuted'}>Executor Instructions</span>
+              </div>
+            </div>
+
+            {/* Live Terminal logs from Agent 01 */}
+            <div className="border-t border-white/5 pt-4 mt-2">
+              <span className="text-[9px] text-textMuted uppercase font-bold tracking-wider block mb-2">
+                Agent 01 Live Telemetry
+              </span>
+              <div className="bg-[#030304]/60 border border-white/5 rounded-xl p-3 h-28 overflow-y-auto flex flex-col gap-2 font-mono text-[9px] leading-relaxed text-[#A1A1AA] scrollbar-none">
+                {agent1Logs.map((log, idx) => (
+                  <div key={idx} className="flex gap-1.5 items-start">
+                    <span className="text-white/40 mt-0.5">❯</span>
+                    <span>{log}</span>
+                  </div>
+                ))}
               </div>
             </div>
 

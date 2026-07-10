@@ -4,14 +4,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Terminal, Shield, Cpu, RefreshCw, Layers, CheckCircle } from 'lucide-react';
 import FilmGrain from '../components/FilmGrain';
 import Logo from '../components/Logo';
+import { supabase } from '../utils/supabaseClient';
 
-const AGENTS_LIST = [
+const INITIAL_AGENTS_LIST = [
   { id: 'AG-01', name: 'Onboarding Health Agent', phase: 'Setup', role: 'Scores Vault variables to block structural vulnerabilities.', logs: [
     "Vault scoring pipeline initialized...",
-    "Verifying file uploads... Detected: credentials_backup.zip (OK)",
-    "Checking trustee counts... 3/3 assigned (OK)",
-    "Checking check-in timers... 30 days (SAFE)",
-    "Final Vault Health Score compiled: 94/100. Approval granted."
+    "Scanning cloud metadata... Awaiting synchronization."
   ] },
   { id: 'AG-02', name: 'Trustee Readiness Agent', phase: 'Monitor', role: 'Tests trustee communication paths and checks inbox activity.', logs: [
     "Initiating monthly trustee readiness audit...",
@@ -74,13 +72,87 @@ const AGENTS_LIST = [
 
 export default function Agents() {
   const navigate = useNavigate();
-  const [selectedAgent, setSelectedAgent] = useState(AGENTS_LIST[0]);
+  const [agentsList, setAgentsList] = useState(INITIAL_AGENTS_LIST);
+  const [selectedAgent, setSelectedAgent] = useState(INITIAL_AGENTS_LIST[0]);
   const [typedLogs, setTypedLogs] = useState([]);
+
+  // Fetch real database details for Agent 01 (Onboarding Health Agent)
+  useEffect(() => {
+    const syncAgentDiagnostics = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        // Fetch user's active vault
+        const { data: vault } = await supabase
+          .from('vaults')
+          .select('*')
+          .eq('owner_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (vault) {
+          // Fetch trustees for count verification
+          const { data: trustees } = await supabase
+            .from('trustees')
+            .select('id')
+            .eq('vault_id', vault.id);
+
+          const tCount = trustees ? trustees.length : 0;
+
+          setAgentsList(prev => prev.map(a => {
+            if (a.id === 'AG-01') {
+              const logs = [
+                "Vault scoring pipeline initialized...",
+                `Verifying file uploads... Detected: "${vault.name}" (OK)`,
+                `Checking trustee counts... ${tCount}/3 assigned (${tCount === 3 ? 'OK' : 'WARNING'})`,
+                `Checking check-in timers... ${vault.timer_days} days (${vault.timer_days <= 30 ? 'SAFE' : 'NOTICE'})`,
+                `Final Vault Health Score compiled: ${vault.safety_score || 70}/100. Diagnostics complete.`
+              ];
+              // Update selected agent if it's currently AG-01
+              if (selectedAgent.id === 'AG-01') {
+                setSelectedAgent(curr => ({ ...curr, logs }));
+              }
+              return { ...a, logs };
+            }
+            return a;
+          }));
+        } else {
+          setAgentsList(prev => prev.map(a => {
+            if (a.id === 'AG-01') {
+              const logs = [
+                "Vault scoring pipeline initialized...",
+                "Scanning cloud storage... ERROR: No active vault envelope configured.",
+                "Scanning trustees registry... 0/3 assigned (CRITICAL)",
+                "Final Vault Health Score compiled: 0/100. WARNING: Secure payload is missing."
+              ];
+              if (selectedAgent.id === 'AG-01') {
+                setSelectedAgent(curr => ({ ...curr, logs }));
+              }
+              return { ...a, logs };
+            }
+            return a;
+          }));
+        }
+      } catch (err) {
+        console.error("Failed to sync AG-01 dynamic logs:", err);
+      }
+    };
+
+    syncAgentDiagnostics();
+  }, [selectedAgent.id]);
+
+  // Handle agent selection change
+  const handleSelectAgent = (agent) => {
+    // Find the latest state from agentsList
+    const latestAgent = agentsList.find(a => a.id === agent.id) || agent;
+    setSelectedAgent(latestAgent);
+  };
 
   // Simulate logging write character-by-character
   useEffect(() => {
     setTypedLogs([]);
-    
     if (selectedAgent.logs.length === 0) return;
 
     let index = 0;
@@ -123,10 +195,10 @@ export default function Agents() {
           </div>
           
           <div className="flex flex-col gap-2 overflow-y-auto max-h-[480px] scrollbar-none pr-1">
-            {AGENTS_LIST.map((agent) => (
+            {agentsList.map((agent) => (
               <div 
                 key={agent.id}
-                onClick={() => setSelectedAgent(agent)}
+                onClick={() => handleSelectAgent(agent)}
                 className={`p-3.5 rounded-xl border text-left cursor-pointer transition-all duration-200 flex justify-between items-center ${selectedAgent.id === agent.id ? 'bg-[#0C0D1A]/60 border-white/30 shadow-md' : 'bg-[#08080B]/60 border-white/5 hover:border-white/10'}`}
               >
                 <div className="flex flex-col">

@@ -8,38 +8,17 @@ import { supabase } from '../utils/supabaseClient';
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [daysRemaining, setDaysRemaining] = useState(28);
-  const [healthScore, setHealthScore] = useState(94);
+  const [daysRemaining, setDaysRemaining] = useState(30);
+  const [healthScore, setHealthScore] = useState(70);
   const [logs, setLogs] = useState([
-    "Vault switch active: monitoring weekly check-in signals.",
-    "All trustee secure channels verified: 3 of 3 active."
+    "Telemetry online: monitoring check-in countdown.",
+    "Database link established: standing by for signal verification."
   ]);
   const [checkingIn, setCheckingIn] = useState(false);
   const [profileName, setProfileName] = useState('');
-
-  // Fetch logged in profile details
-  useEffect(() => {
-    const fetchProfile = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { data: profile, error } = await supabase
-            .from('profiles')
-            .select('full_name')
-            .eq('id', user.id)
-            .single();
-
-          if (!error && profile) {
-            setProfileName(profile.full_name);
-          }
-        }
-      } catch (err) {
-        console.error("Failed to fetch profile:", err);
-      }
-    };
-
-    fetchProfile();
-  }, []);
+  
+  // Vault data from Supabase
+  const [activeVault, setActiveVault] = useState(null);
 
   // Trustee health states
   const [trustees, setTrustees] = useState([
@@ -50,16 +29,128 @@ export default function Dashboard() {
   const [pingingId, setPingingId] = useState(null);
   const [alertBanner, setAlertBanner] = useState(null); // 'rohan_offline' | null
 
-  // Simple check-in simulation
-  const handleQuickCheckin = () => {
+  // Fetch profile, active vault, and trustees
+  useEffect(() => {
+    const loadDashboardData = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          navigate('/login');
+          return;
+        }
+
+        // A. Fetch profile
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .single();
+
+        if (profile) {
+          setProfileName(profile.full_name);
+        }
+
+        // B. Fetch active vault
+        const { data: vault, error: vaultError } = await supabase
+          .from('vaults')
+          .select('*')
+          .eq('owner_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (vaultError) throw vaultError;
+
+        if (vault) {
+          setActiveVault(vault);
+          setHealthScore(vault.safety_score || 70);
+
+          // Calculate remaining days based on last_checkin_at and timer_days
+          const lastCheckin = new Date(vault.last_checkin_at);
+          const nextCheckinDue = new Date(lastCheckin.getTime() + vault.timer_days * 24 * 60 * 60 * 1000);
+          const diffMs = nextCheckinDue.getTime() - new Date().getTime();
+          const diffDays = Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+          
+          setDaysRemaining(diffDays);
+          setLogs((prev) => [
+            ...prev,
+            `Connected to Vault: "${vault.name}"`,
+            `Check-in frequency: every ${vault.timer_days} days.`,
+            `Current timer status: ${diffDays} days remaining.`
+          ]);
+
+          // C. Fetch trustees for this vault
+          const { data: trusteesList } = await supabase
+            .from('trustees')
+            .select('*')
+            .eq('vault_id', vault.id)
+            .order('shard_index', { ascending: true });
+
+          if (trusteesList && trusteesList.length > 0) {
+            setTrustees(trusteesList.map(t => ({
+              id: t.id,
+              name: t.name,
+              email: t.email,
+              shard: `Shard ${t.shard_index}`,
+              status: 'Online'
+            })));
+          }
+        } else {
+          setLogs((prev) => [
+            ...prev,
+            "Notice: No active vault envelope configured. Please complete setup."
+          ]);
+        }
+      } catch (err) {
+        console.error("Dashboard load failed:", err);
+      }
+    };
+
+    loadDashboardData();
+  }, [navigate]);
+
+  // Real Database Check-in (updates last_checkin_at timestamp)
+  const handleQuickCheckin = async () => {
     setCheckingIn(true);
-    setLogs((prev) => [...prev, "Check-in signal sent from dashboard cockpit."]);
+    setLogs((prev) => [...prev, "Contacting database to verify identity signature..."]);
     
-    setTimeout(() => {
-      setDaysRemaining(30);
-      setLogs((prev) => [...prev, "Identity signature verified. Switch timer reset: 30 days remaining."]);
-      setCheckingIn(false);
-    }, 1200);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("No active session.");
+
+      const now = new Date().toISOString();
+
+      if (activeVault) {
+        const { error } = await supabase
+          .from('vaults')
+          .update({ last_checkin_at: now })
+          .eq('id', activeVault.id);
+
+        if (error) throw error;
+
+        setDaysRemaining(activeVault.timer_days);
+        
+        setLogs((prev) => [
+          ...prev,
+          "Identity verification successful.",
+          `Database synced: last_checkin_at reset at ${new Date(now).toLocaleTimeString()}.`,
+          `Switch timer successfully reset: ${activeVault.timer_days} days remaining.`
+        ]);
+      } else {
+        setTimeout(() => {
+          setDaysRemaining(30);
+          setLogs((prev) => [...prev, "Fallback Check-in verified. (Demo mode)"]);
+          setCheckingIn(false);
+        }, 1000);
+      }
+    } catch (err) {
+      console.error("Database check-in failed:", err);
+      setLogs((prev) => [...prev, `Check-in failed: ${err.message}`]);
+    } finally {
+      if (activeVault) {
+        setCheckingIn(false);
+      }
+    }
   };
 
   // Ping check simulation for trustee
@@ -69,14 +160,13 @@ export default function Dashboard() {
 
     setTimeout(() => {
       setPingingId(null);
-      if (id === 3) {
-        // Rohan Iyer goes unresponsive
-        setTrustees((prev) => prev.map(t => t.id === 3 ? { ...t, status: 'Unresponsive' } : t));
-        setHealthScore(74); // drop readiness score
+      if (id === trustees[2]?.id) {
+        setTrustees((prev) => prev.map(t => t.id === id ? { ...t, status: 'Unresponsive' } : t));
+        setHealthScore((prev) => Math.max(70, prev - 20));
         setAlertBanner('rohan_offline');
         setLogs((prev) => [
           ...prev, 
-          `Trustee Readiness Agent → Connection timeout. No response received from Rohan Iyer.`,
+          `Trustee Readiness Agent → Connection timeout. No response received from ${name}.`,
           `Onboarding Health Agent → Trustee unresponsiveness flagged. Vault safety index compromised!`
         ]);
       } else {
@@ -89,15 +179,29 @@ export default function Dashboard() {
   const handlePromoteBackup = () => {
     setLogs((prev) => [...prev, `Trustee Readiness Agent → Activating automatic backup promotion workflow...`]);
     setTimeout(() => {
-      setTrustees((prev) => prev.map(t => t.id === 3 ? { id: 3, name: 'Karan Nair', email: 'karan@nair.in', shard: 'Shard 3', status: 'Online' } : t));
-      setHealthScore(94); // restore readiness score
+      setTrustees((prev) => prev.map((t, idx) => idx === 2 ? { ...t, name: 'Karan Nair', email: 'karan@nair.in', status: 'Online' } : t));
+      setHealthScore(activeVault ? activeVault.safety_score : 94);
       setAlertBanner(null);
       setLogs((prev) => [
         ...prev, 
-        `Trustee Readiness Agent → Backup trustee Karan Nair promoted to Shard 3.`,
-        `Onboarding Health Agent → Vault safety index restored to 94/100.`
+        `Trustee Readiness Agent → Backup trustee Karan Nair promoted.`,
+        `Onboarding Health Agent → Vault safety index restored.`
       ]);
     }, 1200);
+  };
+
+  // Synchronous + Asynchronous Instant Sign Out
+  const handleSignOutInstant = async () => {
+    // Clear all supabase local storage items instantly
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('sb-')) {
+        localStorage.removeItem(key);
+      }
+    }
+    navigate('/login');
+    // Call Supabase cloud signout in background asynchronously
+    supabase.auth.signOut().catch(console.error);
   };
 
   // Status logs timer
@@ -118,18 +222,25 @@ export default function Dashboard() {
     <div className="relative min-h-screen bg-[#030304] text-textWhite font-sans overflow-hidden flex flex-col justify-between">
       <FilmGrain />
 
+      {/* AMBIENT BACKGROUND GLOWS */}
+      <div className="absolute top-0 right-1/4 w-[500px] h-[500px] bg-radial-gradient from-white/[0.015] to-transparent pointer-events-none blur-3xl z-0" />
+      <div className="absolute bottom-0 left-1/4 w-[400px] h-[400px] bg-radial-gradient from-white/[0.01] to-transparent pointer-events-none blur-3xl z-0" />
+
       {/* PREMIUM FULL-WIDTH GLASS NAVBAR */}
-      <header className="fixed top-0 left-0 right-0 z-50 bg-[#030304]/75 backdrop-blur-md border-b border-white/5 py-4 px-6 md:px-12 flex justify-between items-center shadow-lg">
+      <header className="fixed top-0 left-0 right-0 z-50 bg-[#030304]/80 backdrop-blur-xl border-b border-white/5 py-4 px-6 md:px-12 flex justify-between items-center shadow-2xl transition-all duration-300">
         <Logo />
         <div className="flex items-center gap-6 text-xs font-semibold">
-          {profileName && <span className="text-white uppercase tracking-wider font-extrabold text-[10px]">Agent: {profileName}</span>}
-          <span className="text-textMuted">Vault Reference: 0x8F5C</span>
+          {profileName && (
+            <span className="text-white uppercase tracking-widest font-extrabold text-[10px] bg-white/[0.04] border border-white/10 px-3 py-1 rounded-full shadow-[0_0_15px_rgba(255,255,255,0.02)]">
+              Agent: {profileName}
+            </span>
+          )}
+          <span className="text-textMuted font-mono text-[10px]">
+            Vault: {activeVault ? activeVault.id.slice(0, 8).toUpperCase() : 'None'}
+          </span>
           <button 
-            onClick={async () => {
-              await supabase.auth.signOut();
-              navigate('/');
-            }}
-            className="px-3 py-1 border border-white/10 rounded-full bg-white/[0.02] hover:bg-white/5 hover:border-white/20 text-textMuted hover:text-white transition-all cursor-pointer text-[10px] font-semibold"
+            onClick={handleSignOutInstant}
+            className="px-3.5 py-1.5 border border-red-500/20 rounded-full bg-red-500/[0.03] hover:bg-red-500/10 hover:border-red-500/40 text-red-400 hover:text-red-300 transition-all duration-300 cursor-pointer text-[10px] font-bold tracking-wider uppercase shadow-[0_0_15px_rgba(239,68,68,0.02)]"
           >
             Sign Out
           </button>
@@ -143,62 +254,64 @@ export default function Dashboard() {
         <div className="lg:col-span-8 flex flex-col gap-6">
           
           {/* Main Vault Switch widget */}
-          <div className="bg-[#08080B]/85 border border-white/7 rounded-2xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-around gap-6 glass-panel relative overflow-hidden glint-effect">
+          <div className="bg-[#08080B]/85 border border-white/5 rounded-2xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-around gap-6 glass-panel relative overflow-hidden shadow-[0_0_50px_rgba(255,255,255,0.015)] glint-effect">
+            <div className="absolute inset-0 bg-gradient-to-b from-white/[0.01] to-transparent pointer-events-none" />
             
             {/* Countdown SVG progress ring */}
             <div className="relative w-48 h-48 flex items-center justify-center">
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                {/* Background Ring */}
                 <circle 
                   cx="50" 
                   cy="50" 
                   r="42" 
-                  stroke="rgba(255,255,255,0.02)" 
-                  strokeWidth="6" 
+                  stroke="rgba(255,255,255,0.01)" 
+                  strokeWidth="5" 
                   fill="transparent" 
                 />
-                {/* Animated progress ring in silver */}
                 <motion.circle 
                   cx="50" 
                   cy="50" 
                   r="42" 
                   stroke="#FFFFFF" 
-                  strokeWidth="6" 
+                  strokeWidth="5" 
                   fill="transparent" 
                   strokeDasharray="264"
-                  animate={{ strokeDashoffset: 264 - (264 * daysRemaining) / 30 }}
+                  animate={{ strokeDashoffset: activeVault ? (264 - (264 * daysRemaining) / activeVault.timer_days) : 0 }}
                   transition={{ duration: 1, ease: 'easeOut' }}
                   strokeLinecap="round"
-                  className="drop-shadow-[0_0_8px_rgba(255,255,255,0.25)]"
+                  className="drop-shadow-[0_0_10px_rgba(255,255,255,0.3)]"
                 />
               </svg>
               
-              {/* Central text readouts */}
               <div className="absolute flex flex-col items-center justify-center font-sans">
-                <span className="text-4xl font-extrabold text-textWhite">{daysRemaining}</span>
-                <span className="text-[9px] text-textMuted uppercase tracking-widest mt-1">Days remaining</span>
+                <span className="text-5xl font-black text-textWhite tracking-tighter drop-shadow-[0_0_15px_rgba(255,255,255,0.1)]">{daysRemaining}</span>
+                <span className="text-[9px] text-textMuted uppercase tracking-widest mt-1.5 font-bold">Days Left</span>
               </div>
             </div>
 
             {/* Quick check-in panel */}
-            <div className="flex flex-col text-left gap-4 max-w-xs w-full">
+            <div className="flex flex-col text-left gap-5 max-w-xs w-full relative z-10">
               <div>
-                <span className="text-[10px] text-white/60 uppercase tracking-widest block font-bold mb-1">
-                  Telemetry nominal
+                <span className="text-[10px] text-white/50 uppercase tracking-widest block font-bold mb-1">
+                  Telemetry status nominal
                 </span>
-                <h2 className="font-sans font-bold text-lg text-textWhite uppercase">
-                  Welcome Back, {profileName || 'Agent'}
+                <h2 className="font-sans font-extrabold text-xl text-textWhite uppercase tracking-tight leading-none">
+                  Welcome Back, {profileName.split(' ')[0] || 'Agent'}
                 </h2>
-                <p className="text-textMuted text-xs mt-1.5 leading-relaxed font-light">
-                  Your last verification signal was synced 48 hours ago. Wellness check-in due in 28 days.
+                <p className="text-textMuted text-xs mt-2.5 leading-relaxed font-light">
+                  {activeVault ? (
+                    `Active Envelope: "${activeVault.name}". Clear check-in triggers to lock active wellness status.`
+                  ) : (
+                    "No vault envelope configured. Please complete setup in the builder wizard."
+                  )}
                 </p>
               </div>
 
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-2.5">
                 <button 
                   onClick={handleQuickCheckin}
-                  disabled={checkingIn}
-                  className="w-full py-3 bg-white text-black hover:bg-zinc-200 font-bold text-xs tracking-wider rounded-full transition-all duration-200 uppercase flex items-center justify-center gap-2 cursor-pointer border-0 shadow-lg"
+                  disabled={checkingIn || !activeVault}
+                  className="w-full py-3.5 bg-white text-black hover:bg-zinc-200 hover:shadow-[0_0_25px_rgba(255,255,255,0.15)] font-bold text-xs tracking-widest rounded-full transition-all duration-300 uppercase flex items-center justify-center gap-2 cursor-pointer border-0 shadow-lg disabled:opacity-40"
                 >
                   {checkingIn ? (
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -206,27 +319,28 @@ export default function Dashboard() {
                     <span>Reset Custody Switch</span>
                   )}
                 </button>
-                <Link to="/checkin" className="text-center text-[10px] text-textMuted hover:text-white transition-colors font-semibold flex items-center justify-center gap-1 mt-2 hover:underline">
-                  Or open Wellness Chat Agent →
+                <Link to="/checkin" className="text-center text-[9px] text-textMuted hover:text-white transition-all font-bold uppercase tracking-wider flex items-center justify-center gap-1 mt-1 hover:underline">
+                  Or execute Wellness chat verification →
                 </Link>
               </div>
+
             </div>
 
           </div>
 
           {/* Diagnostics terminal logs */}
-          <div className="bg-[#050508]/90 border border-white/10 rounded-2xl overflow-hidden shadow-2xl flex flex-col flex-grow min-h-[250px]">
+          <div className="bg-[#050508]/90 border border-white/5 rounded-2xl overflow-hidden shadow-2xl flex flex-col flex-grow min-h-[250px]">
             <div className="bg-[#0C0D1A]/80 border-b border-white/5 px-4 py-3.5 flex items-center justify-between text-xs text-textMuted">
               <div className="flex items-center gap-2">
                 <Clock className="w-4 h-4 text-white" />
-                <span>Security activity logs</span>
+                <span className="font-bold tracking-wider uppercase text-[10px]">Diagnostics telemetry logs</span>
               </div>
-              <span className="text-[9px] tracking-wider text-forestGreen font-bold">SYNCED</span>
+              <span className="text-[9px] tracking-wider text-forestGreen font-bold bg-forestGreen/10 border border-forestGreen/20 px-2 py-0.5 rounded-full">ACTIVE</span>
             </div>
-            <div className="p-4 text-[11px] text-[#A1A1AA] flex flex-col gap-2.5 text-left bg-black/45 flex-grow overflow-y-auto max-h-[300px] scrollbar-none">
+            <div className="p-4 text-[10px] text-[#A2A2AD] flex flex-col gap-2.5 text-left bg-black/45 flex-grow overflow-y-auto max-h-[300px] scrollbar-none font-mono">
               {logs.map((log, index) => (
-                <div key={index} className="flex gap-2">
-                  <span className="text-white/60 select-none font-bold">{index + 1}</span>
+                <div key={index} className="flex gap-2.5 items-start">
+                  <span className="text-white/30 select-none font-bold">❯</span>
                   <span>{log}</span>
                 </div>
               ))}
@@ -239,62 +353,62 @@ export default function Dashboard() {
         <div className="lg:col-span-4 flex flex-col gap-6">
           
           {/* Vault Health Card */}
-          <div className="bg-[#0A0A12]/40 border border-white/5 rounded-2xl p-5 text-left flex flex-col gap-4 shadow-lg backdrop-blur-sm glass-card relative overflow-hidden glint-effect">
-            <div className="flex justify-between items-center border-b border-white/5 pb-2 text-[9px] text-textMuted uppercase font-semibold">
+          <div className="bg-[#0A0A12]/40 border border-white/5 rounded-2xl p-5 text-left flex flex-col gap-4 shadow-2xl backdrop-blur-sm glass-card relative overflow-hidden glint-effect">
+            <div className="flex justify-between items-center border-b border-white/5 pb-2.5 text-[9px] text-textMuted uppercase font-bold tracking-wider">
               <span>Vault safety index</span>
-              <span className="text-white font-bold">Approved</span>
+              <span className="text-white font-extrabold">{activeVault ? 'Active' : 'Unsealed'}</span>
             </div>
             
             <div className="flex items-center justify-between">
               <div className="flex flex-col">
-                <span className="text-3xl font-extrabold text-gradient">{healthScore}/100</span>
-                <span className="text-[9px] text-textMuted uppercase mt-0.5 font-semibold">Ready Score</span>
+                <span className="text-4xl font-black text-gradient tracking-tight">{healthScore}/100</span>
+                <span className="text-[9px] text-textMuted uppercase mt-0.5 font-bold tracking-wider">Security Grade</span>
               </div>
-              <Shield className="w-8 h-8 text-white/25" />
+              <Shield className="w-8 h-8 text-white/20" />
             </div>
 
-            <div className="text-[10px] text-textMuted flex flex-col gap-2 uppercase font-semibold">
-              <div className="flex items-center gap-2">
-                <CheckCircle className="w-3.5 h-3.5 text-forestGreen" />
-                <span>3 Trustees configured</span>
+            <div className="text-[10px] text-textMuted flex flex-col gap-2.5 uppercase font-bold tracking-wider">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle className={`w-4 h-4 ${activeVault ? 'text-forestGreen' : 'text-[#EF4444]'}`} />
+                <span className={activeVault ? 'text-white' : 'text-textMuted'}>{activeVault ? '3 Trustees configured' : 'Trustees unassigned'}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <CheckCircle className="w-3.5 h-3.5 text-forestGreen" />
-                <span>Payload encrypted locally</span>
+              <div className="flex items-center gap-2.5">
+                <CheckCircle className={`w-4 h-4 ${activeVault ? 'text-forestGreen' : 'text-[#EF4444]'}`} />
+                <span className={activeVault ? 'text-white' : 'text-textMuted'}>{activeVault ? 'Payload encrypted locally' : 'No file upload'}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <CheckCircle className="w-3.5 h-3.5 text-forestGreen" />
-                <span>RAG manuals generated</span>
+              <div className="flex items-center gap-2.5">
+                <CheckCircle className={`w-4 h-4 ${activeVault ? 'text-forestGreen' : 'text-[#EF4444]'}`} />
+                <span className={activeVault ? 'text-white' : 'text-textMuted'}>{activeVault ? 'RAG manuals generated' : 'Manuals pending'}</span>
               </div>
             </div>
           </div>
 
           {/* Trustee Network Monitor */}
-          <div className="bg-[#0A0A12]/40 border border-white/5 rounded-2xl p-5 text-left flex flex-col gap-4 shadow-lg backdrop-blur-sm glass-card relative overflow-hidden">
-            <div className="flex justify-between items-center border-b border-white/5 pb-2 text-[9px] text-textMuted uppercase font-semibold">
+          <div className="bg-[#0A0A12]/40 border border-white/5 rounded-2xl p-5 text-left flex flex-col gap-4 shadow-2xl backdrop-blur-sm glass-card relative overflow-hidden">
+            <div className="flex justify-between items-center border-b border-white/5 pb-2.5 text-[9px] text-textMuted uppercase font-bold tracking-wider">
               <span>Key trustees</span>
-              <span>2 of 3 threshold</span>
+              <span className="font-extrabold text-white">2 of 3 threshold</span>
             </div>
 
             <div className="flex flex-col gap-3">
               {trustees.map((t) => (
-                <div key={t.id} className="flex flex-col gap-2 border-b border-white/5 pb-2.5 last:border-0 last:pb-0">
+                <div key={t.id} className="flex flex-col gap-2 border-b border-white/5 pb-3 last:border-0 last:pb-0">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3 font-sans">
-                      <div className="w-7 h-7 rounded-full bg-white/[0.02] border border-white/5 flex items-center justify-center">
+                      <div className="w-8 h-8 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-center shadow-lg">
                         <Key className="w-3.5 h-3.5 text-white" />
                       </div>
                       <div className="flex flex-col text-left">
-                        <span className="text-xs font-semibold text-textWhite">{t.name}</span>
-                        <span className="text-[9px] text-textMuted font-medium">{t.shard} · {t.email}</span>
+                        <span className="text-xs font-bold text-textWhite">{t.name}</span>
+                        <span className="text-[9px] text-textMuted font-semibold tracking-wide truncate max-w-[125px] mt-0.5">{t.shard} · {t.email}</span>
                       </div>
                     </div>
                     
                     <div className="flex items-center gap-2 font-sans">
                       <button 
                         onClick={() => handlePingTrustee(t.id, t.name)}
-                        disabled={pingingId !== null}
-                        className="bg-white/5 hover:bg-white/10 border border-white/10 px-2 py-0.5 rounded text-[9px] uppercase text-textWhite transition-colors cursor-pointer"
+                        disabled={pingingId !== null || !activeVault}
+                        className="bg-white/5 hover:bg-white/10 hover:border-white/20 border border-white/10 px-2.5 py-1 rounded text-[9px] uppercase text-textWhite font-bold transition-all cursor-pointer disabled:opacity-40"
                       >
                         {pingingId === t.id ? (
                           <RefreshCw className="w-2.5 h-2.5 animate-spin" />
@@ -303,8 +417,8 @@ export default function Dashboard() {
                         )}
                       </button>
                       
-                      <div className={`flex items-center gap-1.5 text-[9px] font-semibold uppercase ${t.status === 'Online' ? 'text-forestGreen' : 'text-red-500'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${t.status === 'Online' ? 'bg-forestGreen' : 'bg-red-500 animate-pulse'}`} />
+                      <div className={`flex items-center gap-1.5 text-[9px] font-bold uppercase ${t.status === 'Online' ? 'text-forestGreen' : 'text-red-500'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${t.status === 'Online' ? 'bg-forestGreen shadow-[0_0_8px_#10B981]' : 'bg-red-500 animate-pulse'}`} />
                         <span>{t.status}</span>
                       </div>
                     </div>
@@ -312,13 +426,12 @@ export default function Dashboard() {
                 </div>
               ))}
 
-              {/* Unresponsive alert banner */}
               {alertBanner === 'rohan_offline' && (
-                <div className="bg-red-950/20 border border-red-900/30 p-3 rounded-lg text-[10px] text-red-400 uppercase tracking-wide leading-relaxed mt-2 flex flex-col gap-2 font-semibold">
-                  <span>Alert: Rohan Iyer (Shard 3) is unresponsive. Vault safety index compromised.</span>
+                <div className="bg-red-950/20 border border-red-900/35 p-3.5 rounded-xl text-[10px] text-red-400 uppercase tracking-wide leading-relaxed mt-2 flex flex-col gap-2 font-bold shadow-[0_0_20px_rgba(239,68,68,0.03)] animate-pulse">
+                  <span>Alert: Trustee Rohan Iyer is unresponsive. Safety index compromised.</span>
                   <button 
                     onClick={handlePromoteBackup}
-                    className="w-full bg-red-500/20 hover:bg-red-500/35 border border-red-500/40 text-red-200 py-1.5 rounded-full text-[9px] font-bold uppercase transition-colors cursor-pointer"
+                    className="w-full bg-red-500/20 hover:bg-red-500/35 border border-red-500/40 text-red-200 py-2 rounded-full text-[9px] font-extrabold uppercase transition-colors cursor-pointer"
                   >
                     Promote Backup Trustee (Karan Nair)
                   </button>
@@ -328,14 +441,14 @@ export default function Dashboard() {
           </div>
 
           {/* Quick links settings */}
-          <div className="grid grid-cols-2 gap-3 text-xs font-semibold">
-            <Link to="/setup" className="glass-card border border-white/5 p-4 rounded-xl text-center flex flex-col justify-center items-center gap-2 hover:border-white/15">
-              <Database className="w-4 h-4 text-white" />
-              <span className="text-[10px] text-textWhite uppercase">Configure Vault</span>
+          <div className="grid grid-cols-2 gap-3 text-xs font-bold uppercase tracking-wider">
+            <Link to="/setup" className="glass-card border border-white/5 hover:border-white/15 p-4 rounded-xl text-center flex flex-col justify-center items-center gap-2 transition-all hover:bg-white/[0.01]">
+              <Database className="w-4.5 h-4.5 text-white" />
+              <span className="text-[9px] text-textWhite mt-1">Configure Vault</span>
             </Link>
-            <Link to="/agents" className="glass-card border border-white/5 p-4 rounded-xl text-center flex flex-col justify-center items-center gap-2 hover:border-white/15">
-              <Shield className="w-4 h-4 text-white" />
-              <span className="text-[10px] text-textWhite uppercase">Agent Matrix</span>
+            <Link to="/agents" className="glass-card border border-white/5 hover:border-white/15 p-4 rounded-xl text-center flex flex-col justify-center items-center gap-2 transition-all hover:bg-white/[0.01]">
+              <Shield className="w-4.5 h-4.5 text-white" />
+              <span className="text-[9px] text-textWhite mt-1">Agent Matrix</span>
             </Link>
           </div>
 

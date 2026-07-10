@@ -119,6 +119,21 @@ export default function Landing() {
     <div className="relative min-h-screen bg-[#030304] text-textWhite font-sans overflow-hidden">
       <FilmGrain />
 
+      {/* TECHNICAL CYBER BLUEPRINT GRID & NEON AMBIENT DEPTH */}
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.012)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.012)_1px,transparent_1px)] bg-[size:40px_40px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_70%,transparent_100%)] pointer-events-none z-0" />
+      <div className="absolute top-[10%] left-1/4 w-[600px] h-[600px] bg-radial-gradient from-white/[0.025] to-transparent pointer-events-none blur-[120px] z-0" />
+      <div className="absolute bottom-[10%] right-1/4 w-[500px] h-[500px] bg-radial-gradient from-white/[0.015] to-transparent pointer-events-none blur-[100px] z-0" />
+
+      {/* PREMIUM CYBERSECURITY BACKDROP HERO IMAGE */}
+      <div 
+        className="absolute inset-0 z-0 bg-cover bg-center pointer-events-none opacity-25"
+        style={{ 
+          backgroundImage: 'url("/deaddrop_hero_bg.png")',
+          maskImage: 'radial-gradient(ellipse 70% 60% at 50% 50%, black 50%, transparent 100%)',
+          WebkitMaskImage: 'radial-gradient(ellipse 70% 60% at 50% 50%, black 50%, transparent 100%)'
+        }}
+      />
+
       {/* PREMIUM FULL-WIDTH GLASS NAVBAR */}
       <header className="fixed top-0 left-0 right-0 z-50 bg-[#030304]/75 backdrop-blur-md border-b border-white/5 py-4 px-6 md:px-12 flex justify-between items-center shadow-lg">
         <Logo />

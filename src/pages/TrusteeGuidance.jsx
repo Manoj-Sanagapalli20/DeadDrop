@@ -1,41 +1,83 @@
-import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Search, ChevronRight, CornerDownRight, ShieldAlert, Sparkles, RefreshCw } from 'lucide-react';
+import { Search, CornerDownRight, ShieldAlert, RefreshCw } from 'lucide-react';
 import FilmGrain from '../components/FilmGrain';
 import Logo from '../components/Logo';
-
-const MOCK_ANSWERS = [
-  { keywords: ['sbi', 'locker', 'bank'], text: "The SBI bank locker keys are located in the drawer under the master bedroom safe. The safe combination is 28-10-94. Share this with Priya Sharma." },
-  { keywords: ['coinbase', 'crypto', 'wallet'], text: "The Coinbase crypto hardware Ledger wallet is in the study room vault (Code: 8520). The 24-word recovery seed phrase is written in page 12 of the physical blue book on the shelf." },
-  { keywords: ['property', 'will', 'lawyer'], text: "The local property executor deed is held at the office of Sharma Associates, Mumbai. Call +91 22 555-0192 to file the release claim." }
-];
+import { supabase } from '../utils/supabaseClient';
+import { executorGuidanceChain } from '../../agents';
 
 export default function TrusteeGuidance() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const vaultId = searchParams.get('vault');
+
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [answer, setAnswer] = useState('');
+  const [vaultInstructions, setVaultInstructions] = useState('');
+  const [vaultName, setVaultName] = useState('Secure Vault');
 
-  const handleSearch = (e) => {
+  // Load the owner's estate instructions from the database
+  useEffect(() => {
+    if (!vaultId) return;
+
+    const fetchInstructions = async () => {
+      try {
+        const { data: vault, error } = await supabase
+          .from('vaults')
+          .select('name, instructions')
+          .eq('id', vaultId)
+          .single();
+
+        if (!error && vault) {
+          setVaultInstructions(vault.instructions || '');
+          setVaultName(vault.name);
+        }
+      } catch (err) {
+        console.error("Failed to load instructions for RAG agent:", err);
+      }
+    };
+
+    fetchInstructions();
+  }, [vaultId]);
+
+  const handleSearch = async (e) => {
     e.preventDefault();
     if (!query.trim()) return;
 
     setLoading(true);
     setAnswer('');
-    
-    setTimeout(() => {
-      const match = MOCK_ANSWERS.find((ans) => 
-        ans.keywords.some((k) => query.toLowerCase().includes(k))
-      );
+
+    try {
+      // 1. Fetch from the real Python LangChain + ChromaDB RAG API endpoint!
+      const response = await fetch("http://localhost:8000/api/guidance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          instructions: vaultInstructions || 'No instructions left by the owner.',
+          query: query
+        })
+      });
+      const data = await response.json(); // returns: { answer: string, sources: any[] }
+
+      setAnswer(data.answer);
+    } catch (err) {
+      console.warn("LangChain RAG backend query failed, using offline fallback:", err);
       
-      if (match) {
-        setAnswer(match.text);
-      } else {
-        setAnswer("No direct matches found in instruction metadata. Verify search queries: try 'SBI bank locker' or 'crypto wallet'.");
+      // Fallback: Run local search inside React
+      try {
+        const result = await executorGuidanceChain.invoke({
+          instructions: vaultInstructions || 'No instructions left by the owner.',
+          query: query
+        });
+        setAnswer(`${result.answer} (Offline Fallback Mode)`);
+      } catch (fallbackErr) {
+        setAnswer("Error: Failed to process query through RAG pipeline.");
       }
+    } finally {
       setLoading(false);
-    }, 1200);
+    }
   };
 
   return (
@@ -45,14 +87,17 @@ export default function TrusteeGuidance() {
       {/* HEADER */}
       <header className="fixed top-0 left-0 right-0 z-50 bg-[#030304]/75 backdrop-blur-md border-b border-white/5 py-4 px-6 md:px-12 flex justify-between items-center shadow-lg">
         <Logo />
-        <Link to="/trustee/decrypt" className="text-xs text-textMuted hover:text-textWhite transition-colors font-semibold">
+        <Link
+          to={vaultId ? `/trustee/decrypt?vault=${vaultId}` : "/trustee/decrypt"}
+          className="text-xs text-textMuted hover:text-textWhite transition-colors font-semibold"
+        >
           Return to Keys Board
         </Link>
       </header>
 
       {/* MAIN CONTAINER */}
       <main className="relative z-10 flex-grow max-w-4xl mx-auto w-full px-6 pt-24 pb-16 flex flex-col gap-6 justify-center">
-        
+
         <div className="text-left mb-2">
           <span className="text-[10px] text-white/60 uppercase tracking-widest font-bold">
             Authorized Inheritance Assistant
@@ -61,23 +106,23 @@ export default function TrusteeGuidance() {
             Executor Instructions RAG Chat
           </h2>
           <p className="text-textMuted text-xs mt-1.5 leading-relaxed max-w-xl font-light">
-            Vault release threshold complete. Query Agent 11 to search instructions, bank lockers, crypto seeds, and legal contacts.
+            Vault release threshold complete. Query Agent 11 to search estate instructions, bank lockers, crypto seeds, and legal details left by the owner for: <span className="text-white font-bold">"{vaultName}"</span>.
           </p>
         </div>
 
         <div className="bg-[#08080B]/80 border border-white/5 rounded-2xl p-6 glass-panel flex flex-col gap-5 text-left relative overflow-hidden glint-effect">
-          
+
           {/* Search bar */}
           <form onSubmit={handleSearch} className="flex gap-3 relative z-10">
-            <input 
+            <input
               type="text"
               required
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="E.g., Where is the SBI bank locker key?..."
-              className="flex-grow bg-[#030304]/60 border border-white/5 focus:border-white/30 focus:ring-0 rounded-lg p-3 text-xs outline-none text-textWhite transition-all duration-300"
+              className="flex-grow bg-[#030304]/60 border border-white/5 focus:border-white/30 focus:ring-0 rounded-lg p-3 text-xs outline-none text-textWhite transition-all duration-300 font-sans"
             />
-            <button 
+            <button
               type="submit"
               disabled={loading}
               className="px-6 bg-white text-black hover:bg-zinc-200 text-xs font-bold uppercase rounded-full flex items-center justify-center gap-1.5 transition-colors cursor-pointer border-0 shadow-lg shadow-white/5"
@@ -98,8 +143,8 @@ export default function TrusteeGuidance() {
               <span>Agent 11 Context Search</span>
               <span>Synced</span>
             </div>
-            
-            <div className="p-4 text-[11px] text-[#A1A1AA] min-h-[140px] flex flex-col justify-center bg-black/45">
+
+            <div className="p-4 text-[11px] text-[#A1A1AA] min-h-[140px] flex flex-col justify-center bg-black/45 font-sans">
               {loading ? (
                 <div className="flex items-center justify-center gap-2 text-textMuted animate-pulse">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
@@ -109,12 +154,16 @@ export default function TrusteeGuidance() {
                 <div className="flex flex-col gap-3 text-left">
                   <div className="flex items-start gap-1">
                     <CornerDownRight className="w-3.5 h-3.5 text-white flex-shrink-0 mt-0.5" />
-                    <span className="text-[#E4E4E7] leading-relaxed font-light">{answer}</span>
+                    <span className="text-[#E4E4E7] leading-relaxed font-light whitespace-pre-wrap">{answer}</span>
                   </div>
                 </div>
               ) : (
                 <span className="text-textMuted uppercase animate-pulse">
-                  Awaiting query input: search instructions for 'SBI bank', 'crypto wallet', or 'property will'...
+                  {vaultId ? (
+                    "Awaiting query input: search instructions left by the vault owner..."
+                  ) : (
+                    "Awaiting query input: (Note: Open the link with a vault parameter to search real instructions)"
+                  )}
                 </span>
               )}
             </div>
@@ -132,7 +181,7 @@ export default function TrusteeGuidance() {
       {/* FOOTER */}
       <footer className="relative z-10 w-full py-5 px-6 border-t border-white/5 bg-[#050506]/40 font-mono text-[9px] text-[#52525B]">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <span>DEADDROP INSTRUCTION ENGINE</span>
+          <span>DeadDrop INSTRUCTION ENGINE</span>
           <span>© 2026 SERVICES.</span>
         </div>
       </footer>
