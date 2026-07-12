@@ -2,6 +2,8 @@ from supabase import create_client, Client
 from agents.grace_agent import ContextAwareGraceAgent
 from agents.readiness_agent import TrusteeReadinessAgent
 from agents.escalation_agent import MultiChannelEscalationAgent
+from agents.freshness_agent import CapsuleFreshnessAgent
+from agents.collusion_agent import AntiCollusionAgent
 import datetime
 import time
 import os
@@ -19,6 +21,8 @@ class CronSweeperAgent:
         self.grace_agent = ContextAwareGraceAgent()
         self.readiness_agent = TrusteeReadinessAgent()
         self.escalation_agent = MultiChannelEscalationAgent()
+        self.freshness_agent = CapsuleFreshnessAgent()
+        self.collusion_agent = AntiCollusionAgent()
         
     def sweep_vault_timers(self):
         print(f"[AG-07] [{datetime.datetime.now().isoformat()}] Running database timer audit sweep...")
@@ -57,6 +61,20 @@ class CronSweeperAgent:
                     readiness_res = self.readiness_agent.check_trustee_readiness(vault_id, trustees)
                     for log in readiness_res["logs"]:
                         print(log)
+
+                # 2.5 Run Agent 03 Capsule Freshness checks
+                freshness_res = self.freshness_agent.run_check(
+                    vault_id=vault_id,
+                    category=vault.get("category", "credentials"),
+                    created_at=vault.get("created_at", "")
+                )
+                for log in freshness_res["logs"]:
+                    print(log)
+
+                # 2.6 Run Agent 05 Anti-Collusion checks
+                collusion_res = self.collusion_agent.run_check(vault_id=vault_id)
+                for log in collusion_res["logs"]:
+                    print(log)
                 
                 # 3. Audit check-in timer
                 if elapsed_days >= timer_days:

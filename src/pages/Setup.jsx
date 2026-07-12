@@ -32,16 +32,17 @@ export default function Setup() {
   const [trusteeKeys, setTrusteeKeys] = useState(null); // { 1: keyPair, 2: keyPair, 3: keyPair }
   const [encryptedShards, setEncryptedShards] = useState([]); // Array of { x, hex, privateKeyJWK }
 
-  const [t1Name, setT1Name] = useState('Aarav Patel');
-  const [t1Email, setT1Email] = useState('aarav@patel.in');
-  const [t2Name, setT2Name] = useState('Priya Sharma');
-  const [t2Email, setT2Email] = useState('priya@sharma.in');
-  const [t3Name, setT3Name] = useState('Rohan Iyer');
-  const [t3Email, setT3Email] = useState('rohan@iyer.in');
+  const [t1Name, setT1Name] = useState('');
+  const [t1Email, setT1Email] = useState('');
+  const [t2Name, setT2Name] = useState('');
+  const [t2Email, setT2Email] = useState('');
+  const [t3Name, setT3Name] = useState('');
+  const [t3Email, setT3Email] = useState('');
   const [contactName, setContactName] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [timerDays, setTimerDays] = useState(7);
   const [instructions, setInstructions] = useState('');
+  const [category, setCategory] = useState('');
 
   // DB Save states
   const [sealing, setSealing] = useState(false);
@@ -54,11 +55,11 @@ export default function Setup() {
 
   // Calculate readiness score
   const calculateScore = () => {
-    let score = 30;
-    if (fileUploaded) score += 20;
-    if (t1Email && t2Email && t3Email) score += 20;
-    if (contactName && contactPhone) score += 15;
-    if (instructions.length > 20) score += 15;
+    let score = 0;
+    if (fileUploaded) score += 30;
+    if (t1Email && t2Email && t3Email) score += 30;
+    if (contactName && contactPhone) score += 20;
+    if (instructions.length > 10) score += 20;
     return score;
   };
 
@@ -82,6 +83,16 @@ export default function Setup() {
   }, [fileUploaded, t1Email, t2Email, t3Email, contactName, contactPhone, instructions]);
 
   const handleNext = () => {
+    if (step === 1) {
+      if (!fileUploaded) {
+        alert("Please select and encrypt a target file first.");
+        return;
+      }
+      if (!category) {
+        alert("Please choose an asset category metadata tag to configure freshness thresholds.");
+        return;
+      }
+    }
     if (step < 5) setStep(step + 1);
   };
 
@@ -223,7 +234,8 @@ export default function Setup() {
           iv: bytesToHex(encryptionIv),
           timer_days: timerDays,
           safety_score: calculateScore(),
-          instructions: instructions
+          instructions: instructions,
+          category: category
         })
         .select()
         .single();
@@ -327,15 +339,38 @@ export default function Setup() {
                     )}
                   </div>
 
+                  {/* Asset Category Selection */}
+                  <div className="flex flex-col gap-2 text-left mt-2">
+                    <label className="text-[10px] text-textMuted uppercase tracking-widest font-bold">
+                      Asset Category Metadata
+                    </label>
+                    <select
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value)}
+                      className="w-full bg-[#08080B]/60 border border-white/5 p-3 rounded-xl text-textWhite text-xs outline-none focus:border-white/20 focus:bg-[#030304]/80 focus:shadow-[0_0_20px_rgba(255,255,255,0.04)] font-medium font-sans cursor-pointer transition-all duration-300"
+                    >
+                      <option value="">-- SELECT ASSET CLASSIFICATION CATEGORY (COMPULSORY) --</option>
+                      <option value="credentials">🔑 Credentials & Password Lists (Stale Check: 6 Months)</option>
+                      <option value="financial">💼 Crypto Keys & Seed Phrases (Stale Check: 12 Months)</option>
+                      <option value="legal">📄 Wills & Legal Documents (Stale Check: 24 Months)</option>
+                      <option value="memories">📸 Personal Memories & Photos (Stale Check: Permanent)</option>
+                    </select>
+                    {!category && fileUploaded && (
+                      <span className="text-[9px] text-amber-500 font-extrabold uppercase mt-1.5 animate-pulse text-left block">
+                        ⚠️ Mandatory: Select an asset category above to generate key shares.
+                      </span>
+                    )}
+                  </div>
+
                   {/* Shard Download Dashboard for interactive local test */}
-                  {fileUploaded && encryptedShards.length > 0 && (
+                  {fileUploaded && category && encryptedShards.length > 0 && (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       className="bg-white/[0.02] border border-white/5 p-4 rounded-xl flex flex-col gap-3 mt-2"
                     >
                       <span className="text-[10px] text-white/80 font-bold uppercase tracking-wider block">
-                        🔑 Prototype key shards ready:
+                        🔑 Prototype key shares ready:
                       </span>
                       <p className="text-[10px] text-textMuted font-light leading-relaxed">
                         To test the local decryption pipeline later, download the key files and payload below:
@@ -346,19 +381,19 @@ export default function Setup() {
                           onClick={() => downloadShard(1, encryptedShards[0].hex, encryptedShards[0].privateKeyJWK, t1Name)}
                           className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] text-white flex items-center justify-center gap-1.5 cursor-pointer uppercase transition-colors"
                         >
-                          <Download className="w-3 h-3" /> Shard 1 ({t1Name.split(' ')[0]})
+                          <Download className="w-3 h-3" /> Share 1 ({t1Name.split(' ')[0]})
                         </button>
                         <button
                           onClick={() => downloadShard(2, encryptedShards[1].hex, encryptedShards[1].privateKeyJWK, t2Name)}
                           className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] text-white flex items-center justify-center gap-1.5 cursor-pointer uppercase transition-colors"
                         >
-                          <Download className="w-3 h-3" /> Shard 2 ({t2Name.split(' ')[0]})
+                          <Download className="w-3 h-3" /> Share 2 ({t2Name.split(' ')[0]})
                         </button>
                         <button
                           onClick={() => downloadShard(3, encryptedShards[2].hex, encryptedShards[2].privateKeyJWK, t3Name)}
                           className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] text-white flex items-center justify-center gap-1.5 cursor-pointer uppercase transition-colors"
                         >
-                          <Download className="w-3 h-3" /> Shard 3 ({t3Name.split(' ')[0]})
+                          <Download className="w-3 h-3" /> Share 3 ({t3Name.split(' ')[0]})
                         </button>
                       </div>
 

@@ -29,3 +29,10 @@ future.md
 .env.local
 .env.*
 venv 
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/

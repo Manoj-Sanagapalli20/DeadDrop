@@ -249,7 +249,7 @@ export default function Auth() {
                   </button>
                 )}
               </div>
-              <div className="relative">
+              <div className="relative flex items-center w-full">
                 <input 
                   type={showPassword ? "text" : "password"}
                   required
@@ -258,19 +258,17 @@ export default function Auth() {
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full bg-[#030304]/60 border border-white/5 focus:border-white/30 focus:bg-[#030304]/80 focus:shadow-[0_0_20px_rgba(255,255,255,0.06)] focus:ring-0 rounded-xl p-3.5 pr-12 text-xs placeholder:text-zinc-700 outline-none text-textWhite transition-all duration-300 font-medium font-sans"
                 />
-                <motion.button
+                <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  whileHover={{ scale: 1.08, color: '#ffffff', backgroundColor: 'rgba(255, 255, 255, 0.04)' }}
-                  whileTap={{ scale: 0.92 }}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-textMuted transition-all duration-150 cursor-pointer bg-transparent border-0 p-2 flex items-center justify-center rounded-lg"
+                  className="absolute right-4 text-zinc-400 hover:text-white transition-colors duration-150 cursor-pointer bg-transparent border-none outline-none flex items-center justify-center"
                 >
                   {showPassword ? (
-                    <EyeOff className="w-4 h-4" />
+                    <EyeOff className="w-[18px] h-[18px]" />
                   ) : (
-                    <Eye className="w-4 h-4" />
+                    <Eye className="w-[18px] h-[18px]" />
                   )}
-                </motion.button>
+                </button>
               </div>
             </div>
 
@@ -295,7 +293,7 @@ export default function Auth() {
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <>
-                    <span>{isLogin ? 'Enter Vault Cockpit' : 'Secure Vault Keypair'}</span>
+                    <span>{isLogin ? 'Enter Vault Dashboard' : 'Create Secure Vault Keypair'}</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}

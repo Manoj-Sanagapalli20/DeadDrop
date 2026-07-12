@@ -68,7 +68,7 @@ export default function App() {
         <Route path="/login" element={<PageTransition><Auth /></PageTransition>} />
         <Route path="/signup" element={<PageTransition><Auth /></PageTransition>} />
         
-        {/* User Cockpit Routes (Protected) */}
+        {/* User Dashboard Routes (Protected) */}
         <Route path="/dashboard" element={<ProtectedRoute><PageTransition><Dashboard /></PageTransition></ProtectedRoute>} />
         <Route path="/setup" element={<ProtectedRoute><PageTransition><Setup /></PageTransition></ProtectedRoute>} />
         <Route path="/checkin" element={<ProtectedRoute><PageTransition><Checkin /></PageTransition></ProtectedRoute>} />

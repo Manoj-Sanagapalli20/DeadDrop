@@ -33,6 +33,12 @@ class QueryRequest(BaseModel):
     instructions: str
     query: str
 
+class LogAccessRequest(BaseModel):
+    vault_id: str
+    trustee_id: str
+    ip_address: str
+    user_agent: str
+
 @app.on_event("startup")
 def start_background_sweeper():
     """
@@ -91,6 +97,28 @@ def estate_guidance_query(request: QueryRequest):
         rag_agent = ExecutorGuidanceAgent(request.instructions)
         result = rag_agent.query(request.query)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/trustee/log-access")
+def log_trustee_access(request: LogAccessRequest):
+    """
+    Agent 05: Log trustee console page accesses for collusion auditing.
+    """
+    supabase_url = os.environ.get("VITE_SUPABASE_URL")
+    supabase_key = os.environ.get("VITE_SUPABASE_ANON_KEY")
+    if not supabase_url or not supabase_key:
+        raise HTTPException(status_code=500, detail="Supabase credentials missing.")
+    try:
+        from supabase import create_client
+        supabase = create_client(supabase_url, supabase_key)
+        supabase.table("trustee_access_logs").insert({
+            "vault_id": request.vault_id,
+            "trustee_id": request.trustee_id,
+            "ip_address": request.ip_address,
+            "user_agent": request.user_agent
+        }).execute()
+        return {"status": "Logged"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -1,0 +1,9 @@
+# Tell GitHub's language detector (Linguist) to treat the React frontend pages
+# and stylesheets as documentation/assets, so that the repository correctly
+# highlights the Python AI/ML backend as the primary codebase language.
+
+src/**/*.jsx linguist-documentation
+src/**/*.js linguist-documentation
+src/**/*.css linguist-documentation
+public/** linguist-documentation
+dist/** linguist-documentation

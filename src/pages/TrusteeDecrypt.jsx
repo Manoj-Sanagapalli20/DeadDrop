@@ -141,6 +141,35 @@ export default function TrusteeDecrypt() {
             console.log("Extracted IV from key file.");
           }
           console.log(`Loaded and unwrapped Key Shard ${json.x} successfully.`);
+
+          // D. Log Access telemetry for Agent 05 Anti-Collusion checks
+          try {
+            let ipAddress = '127.0.0.1';
+            try {
+              const ipRes = await fetch('https://api.ipify.org?format=json');
+              const ipData = await ipRes.json();
+              ipAddress = ipData.ip;
+            } catch (e) {
+              // fallback if offline
+            }
+
+            const matched = trusteesList.find(t => t.shard_index === json.x);
+            if (matched && vaultId) {
+              await fetch('http://localhost:8000/api/trustee/log-access', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  vault_id: vaultId,
+                  trustee_id: matched.id,
+                  ip_address: ipAddress,
+                  user_agent: navigator.userAgent
+                })
+              });
+              console.log("[AG-05] Access signature logged successfully.");
+            }
+          } catch (logErr) {
+            console.error("[AG-05] Access logging failed:", logErr);
+          }
         } else {
           alert("Invalid key file format. Make sure it contains the encrypted key shard and its RSA private key card.");
         }

@@ -8,8 +8,8 @@ import { supabase } from '../utils/supabaseClient';
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [daysRemaining, setDaysRemaining] = useState(30);
-  const [healthScore, setHealthScore] = useState(70);
+  const [daysRemaining, setDaysRemaining] = useState(0);
+  const [healthScore, setHealthScore] = useState(0);
   const [logs, setLogs] = useState([
     "Telemetry online: monitoring check-in countdown.",
     "Database link established: standing by for signal verification."
@@ -21,11 +21,7 @@ export default function Dashboard() {
   const [activeVault, setActiveVault] = useState(null);
 
   // Trustee health states
-  const [trustees, setTrustees] = useState([
-    { id: 1, name: 'Aarav Patel', email: 'aarav@patel.in', shard: 'Shard 1', status: 'Online' },
-    { id: 2, name: 'Priya Sharma', email: 'priya@sharma.in', shard: 'Shard 2', status: 'Online' },
-    { id: 3, name: 'Rohan Iyer', email: 'rohan@iyer.in', shard: 'Shard 3', status: 'Online' }
-  ]);
+  const [trustees, setTrustees] = useState([]);
   const [pingingId, setPingingId] = useState(null);
   const [alertBanner, setAlertBanner] = useState(null); // 'rohan_offline' | null
 
@@ -305,24 +301,55 @@ export default function Dashboard() {
                     "No vault envelope configured. Please complete setup in the builder wizard."
                   )}
                 </p>
-              </div>
-
-              <div className="flex flex-col gap-2.5">
-                <button 
-                  onClick={handleQuickCheckin}
-                  disabled={checkingIn || !activeVault}
-                  className="w-full py-3.5 bg-white text-black hover:bg-zinc-200 hover:shadow-[0_0_25px_rgba(255,255,255,0.15)] font-bold text-xs tracking-widest rounded-full transition-all duration-300 uppercase flex items-center justify-center gap-2 cursor-pointer border-0 shadow-lg disabled:opacity-40"
-                >
-                  {checkingIn ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <div className="flex flex-col gap-2.5">
+                  {activeVault ? (
+                    <>
+                      <button 
+                        onClick={handleQuickCheckin}
+                        disabled={checkingIn || activeVault.iv === 'FROZEN_COLLUSION'}
+                        className="w-full py-3.5 bg-white text-black hover:bg-zinc-200 hover:shadow-[0_0_25px_rgba(255,255,255,0.15)] font-bold text-xs tracking-widest rounded-full transition-all duration-300 uppercase flex items-center justify-center gap-2 cursor-pointer border-0 shadow-lg disabled:opacity-40"
+                      >
+                        {checkingIn ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <span>Reset Custody Switch</span>
+                        )}
+                      </button>
+                      {activeVault.iv !== 'FROZEN_COLLUSION' && (
+                        <Link to="/checkin" className="text-center text-[9px] text-textMuted hover:text-white transition-all font-bold uppercase tracking-wider flex items-center justify-center gap-1 mt-1 hover:underline">
+                          Or execute Wellness chat verification →
+                        </Link>
+                      )}
+                    </>
                   ) : (
-                    <span>Reset Custody Switch</span>
+                    <>
+                      <Link 
+                        to="/setup"
+                        className="w-full py-3.5 bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 text-black hover:shadow-[0_0_30px_rgba(245,158,11,0.4)] font-extrabold text-xs tracking-widest rounded-full transition-all duration-300 uppercase flex items-center justify-center gap-2 cursor-pointer border-0 shadow-lg animate-pulse"
+                      >
+                        <Database className="w-3.5 h-3.5" />
+                        <span>Initialize Secure Vault</span>
+                      </Link>
+                      <span className="text-center text-[8px] text-amber-500 font-extrabold uppercase tracking-widest mt-1.5 animate-pulse">
+                        ⚠️ Action Required: Setup Capsule to Start Switch
+                      </span>
+                    </>
                   )}
-                </button>
-                <Link to="/checkin" className="text-center text-[9px] text-textMuted hover:text-white transition-all font-bold uppercase tracking-wider flex items-center justify-center gap-1 mt-1 hover:underline">
-                  Or execute Wellness chat verification →
-                </Link>
-              </div>
+                </div>
+
+                {activeVault && activeVault.is_stale && (
+                  <div className="bg-amber-950/20 border border-amber-900/35 p-3 rounded-xl text-[9px] text-amber-400 uppercase tracking-wide leading-relaxed mt-3 flex flex-col gap-1 font-bold shadow-[0_0_20px_rgba(245,158,11,0.03)] text-left">
+                    <span>⚠️ CAPSULE STALE WARNING [AG-03]: Your '{activeVault.category}' vault was uploaded more than the freshness threshold. Please configure/update your files to prevent obsolete credentials.</span>
+                  </div>
+                )}
+
+                {activeVault && activeVault.iv === 'FROZEN_COLLUSION' && (
+                  <div className="bg-red-950/40 border border-red-900/45 p-3.5 rounded-xl text-[9px] text-red-400 uppercase tracking-wide leading-relaxed mt-3 flex flex-col gap-1.5 font-bold shadow-[0_0_30px_rgba(239,68,68,0.15)] text-left animate-pulse">
+                    <span>🔒 SECURITY ALERT: VAULT FROZEN [AG-05]</span>
+                    <span>Anomalous concurrent accesses were detected from identical IPs or geographically impossible timeframes. Key decryption is disabled.</span>
+                  </div>
+                )}
+                </div>
 
             </div>
 
@@ -391,40 +418,46 @@ export default function Dashboard() {
             </div>
 
             <div className="flex flex-col gap-3">
-              {trustees.map((t) => (
-                <div key={t.id} className="flex flex-col gap-2 border-b border-white/5 pb-3 last:border-0 last:pb-0">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3 font-sans">
-                      <div className="w-8 h-8 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-center shadow-lg">
-                        <Key className="w-3.5 h-3.5 text-white" />
+              {trustees.length === 0 ? (
+                <div className="text-[10px] text-textMuted uppercase text-center py-6 border border-dashed border-white/5 rounded-xl font-semibold">
+                  No trustees configured yet.
+                </div>
+              ) : (
+                trustees.map((t) => (
+                  <div key={t.id} className="flex flex-col gap-2 border-b border-white/5 pb-3 last:border-0 last:pb-0">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3 font-sans">
+                        <div className="w-8 h-8 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-center shadow-lg">
+                          <Key className="w-3.5 h-3.5 text-white" />
+                        </div>
+                        <div className="flex flex-col text-left">
+                          <span className="text-xs font-bold text-textWhite">{t.name}</span>
+                          <span className="text-[9px] text-textMuted font-semibold tracking-wide truncate max-w-[125px] mt-0.5">{t.shard} · {t.email}</span>
+                        </div>
                       </div>
-                      <div className="flex flex-col text-left">
-                        <span className="text-xs font-bold text-textWhite">{t.name}</span>
-                        <span className="text-[9px] text-textMuted font-semibold tracking-wide truncate max-w-[125px] mt-0.5">{t.shard} · {t.email}</span>
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-2 font-sans">
-                      <button 
-                        onClick={() => handlePingTrustee(t.id, t.name)}
-                        disabled={pingingId !== null || !activeVault}
-                        className="bg-white/5 hover:bg-white/10 hover:border-white/20 border border-white/10 px-2.5 py-1 rounded text-[9px] uppercase text-textWhite font-bold transition-all cursor-pointer disabled:opacity-40"
-                      >
-                        {pingingId === t.id ? (
-                          <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                        ) : (
-                          <span>Ping</span>
-                        )}
-                      </button>
                       
-                      <div className={`flex items-center gap-1.5 text-[9px] font-bold uppercase ${t.status === 'Online' ? 'text-forestGreen' : 'text-red-500'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${t.status === 'Online' ? 'bg-forestGreen shadow-[0_0_8px_#10B981]' : 'bg-red-500 animate-pulse'}`} />
-                        <span>{t.status}</span>
+                      <div className="flex items-center gap-2 font-sans">
+                        <button 
+                          onClick={() => handlePingTrustee(t.id, t.name)}
+                          disabled={pingingId !== null || !activeVault}
+                          className="bg-white/5 hover:bg-white/10 hover:border-white/20 border border-white/10 px-2.5 py-1 rounded text-[9px] uppercase text-textWhite font-bold transition-all cursor-pointer disabled:opacity-40"
+                        >
+                          {pingingId === t.id ? (
+                            <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                          ) : (
+                            <span>Ping</span>
+                          )}
+                        </button>
+                        
+                        <div className={`flex items-center gap-1.5 text-[9px] font-bold uppercase ${t.status === 'Online' ? 'text-forestGreen' : 'text-red-500'}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${t.status === 'Online' ? 'bg-forestGreen shadow-[0_0_8px_#10B981]' : 'bg-red-500 animate-pulse'}`} />
+                          <span>{t.status}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
 
               {alertBanner === 'rohan_offline' && (
                 <div className="bg-red-950/20 border border-red-900/35 p-3.5 rounded-xl text-[10px] text-red-400 uppercase tracking-wide leading-relaxed mt-2 flex flex-col gap-2 font-bold shadow-[0_0_20px_rgba(239,68,68,0.03)] animate-pulse">
@@ -442,9 +475,16 @@ export default function Dashboard() {
 
           {/* Quick links settings */}
           <div className="grid grid-cols-2 gap-3 text-xs font-bold uppercase tracking-wider">
-            <Link to="/setup" className="glass-card border border-white/5 hover:border-white/15 p-4 rounded-xl text-center flex flex-col justify-center items-center gap-2 transition-all hover:bg-white/[0.01]">
-              <Database className="w-4.5 h-4.5 text-white" />
-              <span className="text-[9px] text-textWhite mt-1">Configure Vault</span>
+            <Link 
+              to="/setup" 
+              className={`glass-card p-4 rounded-xl text-center flex flex-col justify-center items-center gap-2 transition-all hover:bg-white/[0.01] ${
+                !activeVault 
+                  ? 'border-amber-500/30 hover:border-amber-400/50 shadow-[0_0_20px_rgba(245,158,11,0.15)] bg-amber-500/[0.01] animate-pulse' 
+                  : 'border-white/5 hover:border-white/15'
+              }`}
+            >
+              <Database className={`w-4.5 h-4.5 ${!activeVault ? 'text-amber-400' : 'text-white'}`} />
+              <span className={`text-[9px] mt-1 font-bold ${!activeVault ? 'text-amber-400' : 'text-textWhite'}`}>Configure Vault</span>
             </Link>
             <Link to="/agents" className="glass-card border border-white/5 hover:border-white/15 p-4 rounded-xl text-center flex flex-col justify-center items-center gap-2 transition-all hover:bg-white/[0.01]">
               <Shield className="w-4.5 h-4.5 text-white" />
@@ -459,7 +499,7 @@ export default function Dashboard() {
       {/* Footer copyright */}
       <footer className="relative z-10 w-full py-5 px-6 border-t border-white/5 bg-[#050506]/40 font-mono text-[9px] text-[#52525B]">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <span>DEADDROP SECURITY COCKPIT</span>
+          <span>DEADDROP SECURITY DASHBOARD</span>
           <span>© 2026 SERVICES.</span>
         </div>
       </footer>
