@@ -17,6 +17,7 @@ export default function TrusteeGuidance() {
   const [answer, setAnswer] = useState('');
   const [vaultInstructions, setVaultInstructions] = useState('');
   const [vaultName, setVaultName] = useState('Secure Vault');
+  const [suggestions, setSuggestions] = useState([]);
 
   // Load the owner's estate instructions from the database
   useEffect(() => {
@@ -31,8 +32,29 @@ export default function TrusteeGuidance() {
           .single();
 
         if (!error && vault) {
-          setVaultInstructions(vault.instructions || '');
+          const inst = vault.instructions || '';
+          setVaultInstructions(inst);
           setVaultName(vault.name);
+
+          // Extract suggestions dynamically
+          const clean = inst.toLowerCase();
+          const list = [];
+          if (clean.includes("key") || clean.includes("locker") || clean.includes("sbi")) {
+            list.push("Where are the locker keys?");
+          }
+          if (clean.includes("password") || clean.includes("pin") || clean.includes("login") || clean.includes("laptop") || clean.includes("resume")) {
+            list.push("What is the laptop password?");
+          }
+          if (clean.includes("will") || clean.includes("estate") || clean.includes("legal") || clean.includes("property")) {
+            list.push("Where are the legal documents?");
+          }
+          if (clean.includes("financial") || clean.includes("bank") || clean.includes("account")) {
+            list.push("Are there any bank accounts?");
+          }
+          if (list.length === 0 && inst.trim()) {
+            list.push("What instructions did the owner leave?");
+          }
+          setSuggestions(list);
         }
       } catch (err) {
         console.error("Failed to load instructions for RAG agent:", err);
@@ -123,6 +145,7 @@ export default function TrusteeGuidance() {
               className="flex-grow bg-[#030304]/60 border border-white/5 focus:border-white/30 focus:ring-0 rounded-lg p-3 text-xs outline-none text-textWhite transition-all duration-300 font-sans"
             />
             <button
+              id="search-submit-btn"
               type="submit"
               disabled={loading}
               className="px-6 bg-white text-black hover:bg-zinc-200 text-xs font-bold uppercase rounded-full flex items-center justify-center gap-1.5 transition-colors cursor-pointer border-0 shadow-lg shadow-white/5"
@@ -136,6 +159,30 @@ export default function TrusteeGuidance() {
               )}
             </button>
           </form>
+
+          {/* Dynamic Clickable suggestions chips */}
+          {suggestions.length > 0 && (
+            <div className="flex flex-wrap gap-2 items-center text-[9px] text-textMuted uppercase font-bold tracking-wider mt-1 text-left relative z-10">
+              <span>Suggested Queries:</span>
+              {suggestions.map((sug, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => {
+                    setQuery(sug);
+                    // trigger search
+                    setTimeout(() => {
+                      const btn = document.getElementById("search-submit-btn");
+                      if (btn) btn.click();
+                    }, 50);
+                  }}
+                  className="px-2.5 py-1 bg-white/5 hover:bg-white/10 hover:border-white/20 border border-white/5 rounded-full text-[9px] text-textWhite font-semibold normal-case transition-all cursor-pointer"
+                >
+                  {sug}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Answer terminal widget */}
           <div className="bg-[#050508]/90 border border-white/10 rounded-2xl overflow-hidden shadow-2xl flex flex-col">

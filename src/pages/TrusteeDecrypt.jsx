@@ -359,7 +359,7 @@ export default function TrusteeDecrypt() {
 
           <div className="border-t border-white/5 pt-4 mt-4 text-left">
             <Link 
-              to="/trustee/guidance" 
+              to={vaultId ? `/trustee/guidance?vault=${vaultId}` : "/trustee/guidance"} 
               className="inline-flex items-center gap-2 px-3.5 py-1.5 border border-white/10 rounded-full bg-white/[0.02] hover:bg-white/5 hover:border-white/20 text-xs text-textMuted hover:text-white transition-all font-semibold"
             >
               <HelpCircle className="w-4 h-4" /> Ask AI Guidance Agent for help →
