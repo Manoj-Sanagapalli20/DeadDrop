@@ -18,6 +18,7 @@ export default function TrusteeGuidance() {
   const [vaultInstructions, setVaultInstructions] = useState('');
   const [vaultName, setVaultName] = useState('Secure Vault');
   const [suggestions, setSuggestions] = useState([]);
+  const [topicsList, setTopicsList] = useState([]);
 
   // Load the owner's estate instructions from the database
   useEffect(() => {
@@ -39,22 +40,29 @@ export default function TrusteeGuidance() {
           // Extract suggestions dynamically
           const clean = inst.toLowerCase();
           const list = [];
+          const topics = [];
           if (clean.includes("key") || clean.includes("locker") || clean.includes("sbi")) {
             list.push("Where are the locker keys?");
+            topics.push("🔑 SBI Locker Keys");
           }
           if (clean.includes("password") || clean.includes("pin") || clean.includes("login") || clean.includes("laptop") || clean.includes("resume")) {
             list.push("What is the laptop password?");
+            topics.push("💻 Laptop & Resume Access");
           }
           if (clean.includes("will") || clean.includes("estate") || clean.includes("legal") || clean.includes("property")) {
             list.push("Where are the legal documents?");
+            topics.push("📄 Legal Wills & Documents");
           }
           if (clean.includes("financial") || clean.includes("bank") || clean.includes("account")) {
             list.push("Are there any bank accounts?");
+            topics.push("🏦 Financial Accounts");
           }
           if (list.length === 0 && inst.trim()) {
             list.push("What instructions did the owner leave?");
+            topics.push("📝 General Legacy Instructions");
           }
           setSuggestions(list);
+          setTopicsList(topics);
         }
       } catch (err) {
         console.error("Failed to load instructions for RAG agent:", err);
@@ -131,6 +139,29 @@ export default function TrusteeGuidance() {
             Vault release threshold complete. Query Agent 11 to search estate instructions, bank lockers, crypto seeds, and legal details left by the owner for: <span className="text-white font-bold">"{vaultName}"</span>.
           </p>
         </div>
+
+        {/* Dynamic visual Covered Topics Checklist */}
+        {topicsList.length > 0 && (
+          <div className="bg-[#08080B]/60 border border-white/5 rounded-2xl p-5 text-left relative overflow-hidden glass-panel flex flex-col gap-3">
+            <div className="flex items-center justify-between border-b border-white/5 pb-2 text-[10px] text-textMuted uppercase tracking-wider font-bold">
+              <span>📂 Decrypted Estate Topics Index</span>
+              <span className="text-forestGreen font-semibold uppercase">✓ Active</span>
+            </div>
+            <div className="flex flex-wrap gap-2.5 my-1">
+              {topicsList.map((topic, idx) => (
+                <span
+                  key={idx}
+                  className="px-3.5 py-1.5 bg-white/[0.03] border border-white/10 rounded-xl text-[10px] text-textWhite font-semibold flex items-center gap-2 shadow-sm"
+                >
+                  {topic}
+                </span>
+              ))}
+            </div>
+            <p className="text-[10px] text-textMuted leading-relaxed font-light font-sans max-w-xl">
+              The owner has documented security details on these specific topics. Use the search assistant below or click one of the suggested prompts to unlock details.
+            </p>
+          </div>
+        )}
 
         <div className="bg-[#08080B]/80 border border-white/5 rounded-2xl p-6 glass-panel flex flex-col gap-5 text-left relative overflow-hidden glint-effect">
 

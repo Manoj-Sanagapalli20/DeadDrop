@@ -1,10 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Shield, Key, Bell, Power, AlertTriangle, CheckCircle, Database, Clock, RefreshCw, ChevronRight } from 'lucide-react';
+import { Shield, Key, Bell, Power, AlertTriangle, CheckCircle, Database, Clock, RefreshCw, ChevronRight, Upload } from 'lucide-react';
 import FilmGrain from '../components/FilmGrain';
 import Logo from '../components/Logo';
 import { supabase } from '../utils/supabaseClient';
+import { 
+  generateAESKeyBytes, 
+  encryptFile, 
+  splitSecret, 
+  rsaEncrypt, 
+  bytesToHex, 
+  hexToBytes, 
+  importKeyJWK 
+} from '../utils/crypto';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -16,6 +25,8 @@ export default function Dashboard() {
   ]);
   const [checkingIn, setCheckingIn] = useState(false);
   const [profileName, setProfileName] = useState('');
+  const [addingFile, setAddingFile] = useState(false);
+  const addFileInputRef = useRef(null);
   
   // Vault data from Supabase
   const [activeVault, setActiveVault] = useState(null);
@@ -120,7 +131,7 @@ export default function Dashboard() {
         const { error } = await supabase
           .from('vaults')
           .update({ last_checkin_at: now })
-          .eq('id', activeVault.id);
+          .eq('owner_id', user.id);
 
         if (error) throw error;
 
@@ -146,6 +157,144 @@ export default function Dashboard() {
       if (activeVault) {
         setCheckingIn(false);
       }
+    }
+  };
+
+  const handleAddFileChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setAddingFile(true);
+    setLogs((prev) => [...prev, `[Owner Activity] Preparing to append "${file.name}" to vault...`]);
+
+    try {
+      // 1. Fetch trustees data for the active vault
+      const { data: trusteesList, error: trusteesError } = await supabase
+        .from('trustees')
+        .select('*')
+        .eq('vault_id', activeVault.id);
+
+      if (trusteesError || !trusteesList || trusteesList.length === 0) {
+        throw new Error("No configured trustees found to secure the new file.");
+      }
+
+      // 2. Generate a NEW AES Key for this new file
+      setLogs((prev) => [...prev, "Generating unique cryptographic key for the new file..."]);
+      const aesKeyBytes = generateAESKeyBytes();
+      
+      const fileBytes = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => resolve(new Uint8Array(event.target.result));
+        reader.onerror = (err) => reject(err);
+        reader.readAsArrayBuffer(file);
+      });
+
+      const { encryptedBytes, iv } = await encryptFile(fileBytes, aesKeyBytes);
+
+      setLogs((prev) => [...prev, "Uploading encrypted payload to secure cloud storage..."]);
+      const { data: { user } } = await supabase.auth.getUser();
+      const filePath = `payloads/${user.id}/${Date.now()}_${file.name}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from('vaults')
+        .upload(filePath, encryptedBytes, {
+          contentType: 'application/octet-stream',
+          upsert: true
+        });
+
+      if (uploadError) throw uploadError;
+
+      // Split new AES key into 3 shards
+      const rawShards = splitSecret(aesKeyBytes, 2, 3);
+
+      setLogs((prev) => [...prev, "Distributing encrypted shards to trustee registry..."]);
+      for (const t of trusteesList) {
+        const sIndex = t.shard_index;
+        const shardIndex0 = sIndex - 1;
+        
+        let parsedShard = { publicKeyJWK: null, encryptedShards: [] };
+        if (t.shard.startsWith('{')) {
+          parsedShard = JSON.parse(t.shard);
+        } else {
+          // Backward compatibility
+          parsedShard.encryptedShards = [t.shard];
+        }
+
+        if (!parsedShard.publicKeyJWK) {
+          throw new Error("This vault was created under the old single-file schema. To enable adding files, please re-seal it once in the Setup Wizard (your settings and trustees will be loaded automatically!).");
+        }
+
+        const pubKey = await importKeyJWK(
+          parsedShard.publicKeyJWK,
+          { name: "RSA-OAEP", hash: "SHA-256" },
+          ["encrypt"]
+        );
+
+        const newEncShard = await rsaEncrypt(pubKey, rawShards[shardIndex0].data);
+        parsedShard.encryptedShards.push(bytesToHex(newEncShard));
+
+        const { error: updateTrusteeErr } = await supabase
+          .from('trustees')
+          .update({ shard: JSON.stringify(parsedShard) })
+          .eq('id', t.id);
+
+        if (updateTrusteeErr) throw updateTrusteeErr;
+      }
+
+      setLogs((prev) => [...prev, "Updating vault file records catalog..."]);
+      let names = [];
+      let paths = [];
+      let ivs = [];
+
+      if (activeVault.name.startsWith('[')) {
+        names = JSON.parse(activeVault.name);
+        paths = JSON.parse(activeVault.encrypted_file_path);
+        ivs = JSON.parse(activeVault.iv);
+      } else {
+        names = [activeVault.name];
+        paths = [activeVault.encrypted_file_path];
+        ivs = [activeVault.iv];
+      }
+
+      names.push(file.name);
+      paths.push(filePath);
+      ivs.push(bytesToHex(iv));
+
+      const now = new Date().toISOString();
+      const { error: updateVaultErr } = await supabase
+        .from('vaults')
+        .update({
+          name: JSON.stringify(names),
+          encrypted_file_path: JSON.stringify(paths),
+          iv: JSON.stringify(ivs),
+          last_checkin_at: now
+        })
+        .eq('id', activeVault.id);
+
+      if (updateVaultErr) throw updateVaultErr;
+
+      setDaysRemaining(activeVault.timer_days);
+      setActiveVault((prev) => ({
+        ...prev,
+        name: JSON.stringify(names),
+        encrypted_file_path: JSON.stringify(paths),
+        iv: JSON.stringify(ivs),
+        last_checkin_at: now
+      }));
+
+      setLogs((prev) => [
+        ...prev,
+        `✓ File "${file.name}" successfully appended to your sealed vault!`,
+        `✓ Encrypted key shards distributed to trustees. No new downloads required for trustees!`,
+        `✓ Proof of Life check-in triggered: switch timer reset to ${activeVault.timer_days} days remaining.`
+      ]);
+
+    } catch (err) {
+      console.error("Add file failed:", err);
+      setLogs((prev) => [...prev, `Error adding file: ${err.message}`]);
+      alert(`Error adding file: ${err.message}`);
+    } finally {
+      setAddingFile(false);
     }
   };
 
@@ -296,7 +445,7 @@ export default function Dashboard() {
                 </h2>
                 <p className="text-textMuted text-xs mt-2.5 leading-relaxed font-light">
                   {activeVault ? (
-                    `Active Envelope: "${activeVault.name}". Clear check-in triggers to lock active wellness status.`
+                    `Active Envelope: "${activeVault.name.startsWith('[') ? JSON.parse(activeVault.name).join(', ') : activeVault.name}". Clear check-in triggers to lock active wellness status.`
                   ) : (
                     "No vault envelope configured. Please complete setup in the builder wizard."
                   )}
@@ -320,6 +469,27 @@ export default function Dashboard() {
                           Or execute Wellness chat verification →
                         </Link>
                       )}
+
+                      <input 
+                        type="file" 
+                        ref={addFileInputRef} 
+                        onChange={handleAddFileChange} 
+                        className="hidden" 
+                      />
+                      <button 
+                        onClick={() => addFileInputRef.current.click()}
+                        disabled={addingFile || activeVault.iv === 'FROZEN_COLLUSION'}
+                        className="w-full py-3 border border-dashed border-white/10 hover:border-white/30 rounded-full bg-white/[0.01] hover:bg-white/[0.04] text-textMuted hover:text-white font-bold text-[10px] tracking-widest transition-all duration-300 uppercase flex items-center justify-center gap-1.5 cursor-pointer shadow-inner mt-2"
+                      >
+                        {addingFile ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <>
+                            <Upload className="w-3 h-3" />
+                            <span>Add File to Vault</span>
+                          </>
+                        )}
+                      </button>
                     </>
                   ) : (
                     <>

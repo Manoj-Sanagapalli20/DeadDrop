@@ -43,7 +43,9 @@ export default function TrusteeDecrypt() {
   const [reconstructed, setReconstructed] = useState(false);
   const [decryptedFileUrl, setDecryptedFileUrl] = useState(null);
   const [decryptedFileName, setDecryptedFileName] = useState('');
-
+  const [encryptedFilesList, setEncryptedFilesList] = useState([]); // [{ name, bytes, iv }]
+  const [decryptedUrls, setDecryptedUrls] = useState([]); // [{ name, url }]
+  
   const getSubmissionsCount = () => {
     let count = 0;
     if (shards[1]) count++;
@@ -68,14 +70,10 @@ export default function TrusteeDecrypt() {
 
         if (vaultError || !vault) throw new Error("Vault record not found in database.");
 
-        setVaultName(vault.name);
-        setDecryptedFileName(vault.name);
-        setKeyIv(vault.iv);
-
-        // B. Query database trustees table to fetch names
+        // B. Query database trustees table to fetch names and shards
         const { data: trustees, error: trusteesError } = await supabase
           .from('trustees')
-          .select('id, name, shard_index')
+          .select('id, name, shard, shard_index')
           .eq('vault_id', vaultId)
           .order('shard_index', { ascending: true });
 
@@ -83,18 +81,50 @@ export default function TrusteeDecrypt() {
           setTrusteesList(trustees);
         }
 
-        // C. Download encrypted payload file from Supabase Storage
-        console.log("Downloading encrypted payload from cloud:", vault.encrypted_file_path);
-        const { data: fileBlob, error: downloadError } = await supabase.storage
-          .from('vaults')
-          .download(vault.encrypted_file_path);
+        // C. Download encrypted payload file(s) from Supabase Storage
+        if (vault.encrypted_file_path.startsWith('[')) {
+          const paths = JSON.parse(vault.encrypted_file_path);
+          const names = JSON.parse(vault.name);
+          const ivs = JSON.parse(vault.iv);
+          const downloadedList = [];
 
-        if (downloadError) throw downloadError;
+          setVaultName(names.join(', '));
+          setDecryptedFileName(names.join(', '));
+          setKeyIv(vault.iv);
 
-        const arrayBuffer = await fileBlob.arrayBuffer();
-        setEncryptedBytes(new Uint8Array(arrayBuffer));
-        setEncryptedFileName(vault.name + '.enc');
-        console.log("Cloud payload downloaded and cached.");
+          for (let i = 0; i < paths.length; i++) {
+            console.log("Downloading encrypted payload chunk:", paths[i]);
+            const { data: fileBlob, error: downloadError } = await supabase.storage
+              .from('vaults')
+              .download(paths[i]);
+            if (downloadError) throw downloadError;
+
+            const arrayBuffer = await fileBlob.arrayBuffer();
+            downloadedList.push({
+              name: names[i],
+              bytes: new Uint8Array(arrayBuffer),
+              iv: ivs[i]
+            });
+          }
+          setEncryptedFilesList(downloadedList);
+          console.log("All multi-payload chunks downloaded and cached.");
+        } else {
+          setVaultName(vault.name);
+          setDecryptedFileName(vault.name);
+          setKeyIv(vault.iv);
+
+          console.log("Downloading encrypted payload from cloud:", vault.encrypted_file_path);
+          const { data: fileBlob, error: downloadError } = await supabase.storage
+            .from('vaults')
+            .download(vault.encrypted_file_path);
+
+          if (downloadError) throw downloadError;
+
+          const arrayBuffer = await fileBlob.arrayBuffer();
+          setEncryptedBytes(new Uint8Array(arrayBuffer));
+          setEncryptedFileName(vault.name + '.enc');
+          console.log("Cloud payload downloaded and cached.");
+        }
 
       } catch (err) {
         console.error("Vault fetch failed:", err);
@@ -126,14 +156,37 @@ export default function TrusteeDecrypt() {
             ["decrypt"]
           );
 
-          // B. Decrypt the wrapped shard payload
-          const encryptedShardBytes = hexToBytes(json.key);
-          const decryptedShardBytes = await rsaDecrypt(privateKey, encryptedShardBytes);
+          // B. Decrypt the wrapped shard payload (Check database catalog first if available)
+          let decryptedList = [];
+          const matchedTrustee = trusteesList.find(t => t.shard_index === json.x);
+          
+          if (matchedTrustee && matchedTrustee.shard) {
+            if (matchedTrustee.shard.startsWith('{')) {
+              const parsed = JSON.parse(matchedTrustee.shard);
+              for (const hex of parsed.encryptedShards) {
+                const decBytes = await rsaDecrypt(privateKey, hexToBytes(hex));
+                decryptedList.push(decBytes);
+              }
+            } else {
+              // Backward compatibility for raw hex shard strings
+              const decBytes = await rsaDecrypt(privateKey, hexToBytes(matchedTrustee.shard));
+              decryptedList.push(decBytes);
+            }
+          } else {
+            // Local Test Mode fallback using the key payload directly from the key file
+            const decBytes = await rsaDecrypt(privateKey, hexToBytes(json.key));
+            decryptedList.push(decBytes);
+          }
 
           // C. Load into active memory
           setShards((prev) => ({
             ...prev,
-            [index]: { x: json.x, data: decryptedShardBytes, owner: json.owner || `Trustee ${index}` }
+            [index]: { 
+              x: json.x, 
+              decryptedShardsList: decryptedList, 
+              data: decryptedList[0], // backward compatibility
+              owner: json.owner || `Trustee ${index}` 
+            }
           }));
           
           if (json.iv && !keyIv) {
@@ -210,49 +263,83 @@ export default function TrusteeDecrypt() {
   const handleReconstruct = async () => {
     setLoading(true);
     
-    let finalPayloadBytes = encryptedBytes;
-    let finalIvHex = keyIv || sessionStorage.getItem('deaddrop_iv');
-
-    // Fallback: If encryptedBytes is not loaded, check sessionStorage
-    if (!finalPayloadBytes) {
-      const hexPayload = sessionStorage.getItem('deaddrop_encrypted_payload');
-      if (hexPayload) {
-        finalPayloadBytes = hexToBytes(hexPayload);
-        const savedName = sessionStorage.getItem('deaddrop_filename') || 'decrypted_secret.bin';
-        setDecryptedFileName(savedName);
-      }
-    }
-
-    if (!finalPayloadBytes || !finalIvHex) {
-      setTimeout(() => {
-        alert("Encrypted payload or IV not found! Please upload the encrypted file (.enc) AND at least one of the key shard files.");
-        setLoading(false);
-      }, 1000);
-      return;
-    }
-
-    const iv = hexToBytes(finalIvHex);
-
     // Assemble active shards
     const activeShares = [];
     if (shards[1]) activeShares.push(shards[1]);
     if (shards[2]) activeShares.push(shards[2]);
     if (shards[3]) activeShares.push(shards[3]);
 
+    if (activeShares.length < 2) {
+      alert("At least 2 key shard files must be uploaded to meet the threshold.");
+      setLoading(false);
+      return;
+    }
+
     setTimeout(async () => {
       try {
         // 1. Reconstruct Key
         const reconstructedKeyBytes = reconstructSecret(activeShares);
 
-        // 2. Decrypt file bytes using AES-GCM
-        const decryptedBytes = await decryptFile(finalPayloadBytes, reconstructedKeyBytes, iv);
+        if (encryptedFilesList.length > 0) {
+          // Decrypt and trigger download for each file in the list
+          const urls = [];
+          for (let i = 0; i < encryptedFilesList.length; i++) {
+            const item = encryptedFilesList[i];
+            
+            // Reconstruct the key specifically for this file index
+            const sharesForFile = activeShares.map(share => ({
+              x: share.x,
+              data: share.decryptedShardsList && share.decryptedShardsList[i] ? share.decryptedShardsList[i] : share.data
+            }));
+            const fileKeyBytes = reconstructSecret(sharesForFile);
+            
+            const ivBytes = hexToBytes(item.iv);
+            const decryptedBytes = await decryptFile(item.bytes, fileKeyBytes, ivBytes);
+            const blob = new Blob([decryptedBytes], { type: 'application/octet-stream' });
+            const url = URL.createObjectURL(blob);
+            urls.push({ name: item.name, url: url });
+          }
+          setDecryptedUrls(urls);
+          setReconstructed(true);
 
-        // 3. Generate file download url
-        const blob = new Blob([decryptedBytes], { type: 'application/octet-stream' });
-        const url = URL.createObjectURL(blob);
-        
-        setDecryptedFileUrl(url);
-        setReconstructed(true);
+          // Automatically trigger downloads for all files
+          urls.forEach(file => {
+            const link = document.createElement('a');
+            link.href = file.url;
+            link.download = file.name;
+            link.click();
+          });
+        } else {
+          // Single file fallback
+          let finalPayloadBytes = encryptedBytes;
+          let finalIvHex = keyIv || sessionStorage.getItem('deaddrop_iv');
+
+          if (!finalPayloadBytes) {
+            const hexPayload = sessionStorage.getItem('deaddrop_encrypted_payload');
+            if (hexPayload) {
+              finalPayloadBytes = hexToBytes(hexPayload);
+              const savedName = sessionStorage.getItem('deaddrop_filename') || 'decrypted_secret.bin';
+              setDecryptedFileName(savedName);
+            }
+          }
+
+          if (!finalPayloadBytes || !finalIvHex) {
+            throw new Error("Encrypted payload bytes or IV hex are missing.");
+          }
+
+          const iv = hexToBytes(finalIvHex);
+          const decryptedBytes = await decryptFile(finalPayloadBytes, reconstructedKeyBytes, iv);
+          const blob = new Blob([decryptedBytes], { type: 'application/octet-stream' });
+          const url = URL.createObjectURL(blob);
+          setDecryptedFileUrl(url);
+          setReconstructed(true);
+
+          // Automatically trigger download
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = decryptedFileName;
+          link.click();
+        }
       } catch (err) {
         console.error("Decryption error:", err);
         alert("Decryption failed! Shards do not match or key values are invalid.");
