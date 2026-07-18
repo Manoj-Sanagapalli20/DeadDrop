@@ -11,7 +11,8 @@ import {
   bytesToHex,
   generateRSAKeyPair,
   rsaEncrypt,
-  exportKeyJWK
+  exportKeyJWK,
+  importKeyJWK
 } from '../utils/crypto';
 import { supabase } from '../utils/supabaseClient';
 import { onboardingHealthChain } from '../../agents';
@@ -44,6 +45,9 @@ export default function Setup() {
   const [instructions, setInstructions] = useState('');
   const [category, setCategory] = useState('');
   const [existingFilesName, setExistingFilesName] = useState('');
+  const [existingVault, setExistingVault] = useState(null);
+  const [existingTrustees, setExistingTrustees] = useState([]);
+  const [useExistingKeys, setUseExistingKeys] = useState(false);
 
   // DB Save states
   const [sealing, setSealing] = useState(false);
@@ -80,6 +84,7 @@ export default function Setup() {
           .maybeSingle();
 
         if (vault) {
+          setExistingVault(vault);
           setTimerDays(vault.timer_days);
           setCategory(vault.category || '');
           setInstructions(vault.instructions || '');
@@ -91,6 +96,8 @@ export default function Setup() {
             } catch (e) {}
           }
           setExistingFilesName(displayNames);
+          setFileName(displayNames);
+          setFileUploaded(true);
 
           const { data: trusteesList } = await supabase
             .from('trustees')
@@ -99,12 +106,18 @@ export default function Setup() {
             .order('shard_index', { ascending: true });
 
           if (trusteesList && trusteesList.length >= 3) {
+            setExistingTrustees(trusteesList);
             setT1Name(trusteesList[0].name || '');
             setT1Email(trusteesList[0].email || '');
             setT2Name(trusteesList[1].name || '');
             setT2Email(trusteesList[1].email || '');
             setT3Name(trusteesList[2].name || '');
             setT3Email(trusteesList[2].email || '');
+
+            // Only enable default key reuse if the existing vault possesses public key lock schemas
+            if (trusteesList[0].shard && trusteesList[0].shard.startsWith('{')) {
+              setUseExistingKeys(true);
+            }
           }
         }
       } catch (err) {
@@ -188,41 +201,71 @@ export default function Setup() {
       setEncryptedPayload(encryptedFilesData);
       setEncryptionIv(encryptedFilesData[0].iv);
 
-      // 2. Generate RSA Key Pairs for all 3 trustees
-      const keys1 = await generateRSAKeyPair();
-      const keys2 = await generateRSAKeyPair();
-      const keys3 = await generateRSAKeyPair();
-
-      const jwkPub1 = await exportKeyJWK(keys1.publicKey);
-      const jwkPub2 = await exportKeyJWK(keys2.publicKey);
-      const jwkPub3 = await exportKeyJWK(keys3.publicKey);
-
-      setTrusteeKeys({
-        1: { ...keys1, publicKeyJWK: jwkPub1 },
-        2: { ...keys2, publicKeyJWK: jwkPub2 },
-        3: { ...keys3, publicKeyJWK: jwkPub3 }
-      });
-
       // 3. Split key into 3 shards
       const rawShards = splitSecret(aesKeyBytes, 2, 3);
 
-      // 4. Encrypt each shard with the corresponding trustee's public RSA key (HACKER PREVENTION)
-      const encShard1 = await rsaEncrypt(keys1.publicKey, rawShards[0].data);
-      const encShard2 = await rsaEncrypt(keys2.publicKey, rawShards[1].data);
-      const encShard3 = await rsaEncrypt(keys3.publicKey, rawShards[2].data);
+      let formattedShards = [];
 
-      // 5. Export Private Keys to JWK format for trustee files
-      const jwkPriv1 = await exportKeyJWK(keys1.privateKey);
-      const jwkPriv2 = await exportKeyJWK(keys2.privateKey);
-      const jwkPriv3 = await exportKeyJWK(keys3.privateKey);
+      if (useExistingKeys && existingTrustees.length >= 3) {
+        console.log("Re-using existing trustee key locks. Encrypting shards with database public keys...");
+        
+        for (let i = 0; i < 3; i++) {
+          const t = existingTrustees[i];
+          const parsed = JSON.parse(t.shard);
+          const pubKey = await importKeyJWK(
+            parsed.publicKeyJWK,
+            { name: "RSA-OAEP", hash: "SHA-256" },
+            ["encrypt"]
+          );
+          const newEncShard = await rsaEncrypt(pubKey, rawShards[i].data);
+          
+          // Append to the list of locked shards
+          const shardData = JSON.stringify({
+            publicKeyJWK: parsed.publicKeyJWK,
+            encryptedShards: [...parsed.encryptedShards, bytesToHex(newEncShard)]
+          });
+          
+          formattedShards.push({
+            x: i + 1,
+            hex: shardData,
+            isUpdate: true
+          });
+        }
+        setEncryptedShards(formattedShards);
+      } else {
+        // 2. Generate RSA Key Pairs for all 3 trustees
+        const keys1 = await generateRSAKeyPair();
+        const keys2 = await generateRSAKeyPair();
+        const keys3 = await generateRSAKeyPair();
 
-      const formattedShards = [
-        { x: 1, hex: bytesToHex(encShard1), privateKeyJWK: jwkPriv1 },
-        { x: 2, hex: bytesToHex(encShard2), privateKeyJWK: jwkPriv2 },
-        { x: 3, hex: bytesToHex(encShard3), privateKeyJWK: jwkPriv3 }
-      ];
+        const jwkPub1 = await exportKeyJWK(keys1.publicKey);
+        const jwkPub2 = await exportKeyJWK(keys2.publicKey);
+        const jwkPub3 = await exportKeyJWK(keys3.publicKey);
 
-      setEncryptedShards(formattedShards);
+        setTrusteeKeys({
+          1: { ...keys1, publicKeyJWK: jwkPub1 },
+          2: { ...keys2, publicKeyJWK: jwkPub2 },
+          3: { ...keys3, publicKeyJWK: jwkPub3 }
+        });
+
+        // 4. Encrypt each shard with the corresponding trustee's public RSA key (HACKER PREVENTION)
+        const encShard1 = await rsaEncrypt(keys1.publicKey, rawShards[0].data);
+        const encShard2 = await rsaEncrypt(keys2.publicKey, rawShards[1].data);
+        const encShard3 = await rsaEncrypt(keys3.publicKey, rawShards[2].data);
+
+        // 5. Export Private Keys to JWK format for trustee files
+        const jwkPriv1 = await exportKeyJWK(keys1.privateKey);
+        const jwkPriv2 = await exportKeyJWK(keys2.privateKey);
+        const jwkPriv3 = await exportKeyJWK(keys3.privateKey);
+
+        formattedShards = [
+          { x: 1, hex: bytesToHex(encShard1), privateKeyJWK: jwkPriv1 },
+          { x: 2, hex: bytesToHex(encShard2), privateKeyJWK: jwkPriv2 },
+          { x: 3, hex: bytesToHex(encShard3), privateKeyJWK: jwkPriv3 }
+        ];
+
+        setEncryptedShards(formattedShards);
+      }
 
       // Save encrypted payload and metadata to session storage for same-tab test shortcut
       sessionStorage.setItem('deaddrop_encrypted_payload', bytesToHex(encryptedFilesData[0].encryptedBytes));
@@ -271,6 +314,11 @@ export default function Setup() {
   };
 
   const handleSealVault = async () => {
+    if (!useExistingKeys && !encryptedPayload) {
+      alert("Please upload and encrypt a file to build your new vault.");
+      return;
+    }
+
     setSealing(true);
     setStatusMessage('Syncing credentials and owner session...');
 
@@ -279,73 +327,156 @@ export default function Setup() {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError || !user) throw new Error("Owner session not found. Please log in again.");
 
-      const filePaths = [];
-      const fileNames = [];
-      const fileIvs = [];
+      let filePaths = [];
+      let fileNames = [];
+      let fileIvs = [];
 
-      // 2. Upload all Encrypted payloads to secure cloud storage
-      const items = Array.isArray(encryptedPayload) ? encryptedPayload : [{ name: fileName, encryptedBytes: encryptedPayload, iv: encryptionIv }];
-      
-      for (const item of items) {
-        setStatusMessage(`Uploading encrypted payload "${item.name}"...`);
-        const filePath = `payloads/${user.id}/${Date.now()}_${item.name}`;
-        const { error: uploadError } = await supabase.storage
-          .from('vaults')
-          .upload(filePath, item.encryptedBytes, {
-            contentType: 'application/octet-stream',
-            upsert: true
-          });
-
-        if (uploadError) throw uploadError;
+      // 2. Upload all Encrypted payloads to secure cloud storage (if a new file is uploaded)
+      if (encryptedPayload) {
+        const items = Array.isArray(encryptedPayload) ? encryptedPayload : [{ name: fileName, encryptedBytes: encryptedPayload, iv: encryptionIv }];
         
-        filePaths.push(filePath);
-        fileNames.push(item.name);
-        fileIvs.push(bytesToHex(item.iv));
+        for (const item of items) {
+          setStatusMessage(`Uploading encrypted payload "${item.name}"...`);
+          const filePath = `payloads/${user.id}/${Date.now()}_${item.name}`;
+          const { error: uploadError } = await supabase.storage
+            .from('vaults')
+            .upload(filePath, item.encryptedBytes, {
+              contentType: 'application/octet-stream',
+              upsert: true
+            });
+
+          if (uploadError) throw uploadError;
+          
+          filePaths.push(filePath);
+          fileNames.push(item.name);
+          fileIvs.push(bytesToHex(item.iv));
+        }
       }
+      
+      let vaultDataId = null;
 
-      // 3. Save Vault Metadata record in database
-      setStatusMessage('Writing zero-knowledge envelope records to database...');
-      const { data: vaultData, error: vaultError } = await supabase
-        .from('vaults')
-        .insert({
-          owner_id: user.id,
-          name: JSON.stringify(fileNames),
-          encrypted_file_path: JSON.stringify(filePaths),
-          iv: JSON.stringify(fileIvs),
-          timer_days: timerDays,
-          safety_score: calculateScore(),
-          instructions: instructions,
-          category: category
-        })
-        .select()
-        .single();
+      if (useExistingKeys && existingVault) {
+        // Build final file catalog by appending new uploads to existing vault files list
+        let finalNames = [];
+        let finalPaths = [];
+        let finalIvs = [];
 
-      if (vaultError) throw vaultError;
+        let oldNames = [];
+        let oldPaths = [];
+        let oldIvs = [];
 
-      // 4. Save RSA-Encrypted Trustee Shards in database (Zero-Knowledge)
-      setStatusMessage('Deploying encrypted key shards to trustee registry...');
-      const shardData1 = JSON.stringify({
-        publicKeyJWK: trusteeKeys[1].publicKeyJWK,
-        encryptedShards: [encryptedShards[0].hex]
-      });
-      const shardData2 = JSON.stringify({
-        publicKeyJWK: trusteeKeys[2].publicKeyJWK,
-        encryptedShards: [encryptedShards[1].hex]
-      });
-      const shardData3 = JSON.stringify({
-        publicKeyJWK: trusteeKeys[3].publicKeyJWK,
-        encryptedShards: [encryptedShards[2].hex]
-      });
+        if (existingVault.name.startsWith('[')) {
+          oldNames = JSON.parse(existingVault.name);
+          oldPaths = JSON.parse(existingVault.encrypted_file_path);
+          oldIvs = JSON.parse(existingVault.iv);
+        } else {
+          oldNames = [existingVault.name];
+          oldPaths = [existingVault.encrypted_file_path];
+          oldIvs = [existingVault.iv];
+        }
 
-      const { error: trusteesError } = await supabase
-        .from('trustees')
-        .insert([
-          { vault_id: vaultData.id, name: t1Name, email: t1Email, shard: shardData1, shard_index: 1 },
-          { vault_id: vaultData.id, name: t2Name, email: t2Email, shard: shardData2, shard_index: 2 },
-          { vault_id: vaultData.id, name: t3Name, email: t3Email, shard: shardData3, shard_index: 3 }
-        ]);
+        if (encryptedPayload) {
+          finalNames = [...oldNames, ...fileNames];
+          finalPaths = [...oldPaths, ...filePaths];
+          finalIvs = [...oldIvs, ...fileIvs];
+        } else {
+          finalNames = oldNames;
+          finalPaths = oldPaths;
+          finalIvs = oldIvs;
+        }
 
-      if (trusteesError) throw trusteesError;
+        setStatusMessage('Updating existing zero-knowledge envelope records in database...');
+        const { data: updatedVault, error: vaultError } = await supabase
+          .from('vaults')
+          .update({
+            name: JSON.stringify(finalNames),
+            encrypted_file_path: JSON.stringify(finalPaths),
+            iv: JSON.stringify(finalIvs),
+            timer_days: timerDays,
+            safety_score: calculateScore(),
+            instructions: instructions,
+            category: category,
+            last_checkin_at: new Date().toISOString()
+          })
+          .eq('id', existingVault.id)
+          .select()
+          .single();
+
+        if (vaultError) throw vaultError;
+        vaultDataId = updatedVault.id;
+
+        setStatusMessage('Deploying updated key shards to trustee registry...');
+        for (let i = 0; i < 3; i++) {
+          const t = existingTrustees[i];
+          const updatePayload = {
+            name: [t1Name, t2Name, t3Name][i],
+            email: [t1Email, t2Email, t3Email][i]
+          };
+
+          // Only update shard if a new file was actually encrypted
+          if (encryptedShards && encryptedShards[i]) {
+            updatePayload.shard = encryptedShards[i].hex;
+          }
+
+          const { error: updateTrusteeErr } = await supabase
+            .from('trustees')
+            .update(updatePayload)
+            .eq('id', t.id);
+
+          if (updateTrusteeErr) throw updateTrusteeErr;
+        }
+
+      } else {
+        if (!encryptedPayload && existingVault) {
+          filePaths = JSON.parse(existingVault.encrypted_file_path);
+          fileNames = JSON.parse(existingVault.name);
+          fileIvs = JSON.parse(existingVault.iv);
+        }
+        // 3. Save Vault Metadata record in database
+        setStatusMessage('Writing zero-knowledge envelope records to database...');
+        const { data: vaultData, error: vaultError } = await supabase
+          .from('vaults')
+          .insert({
+            owner_id: user.id,
+            name: JSON.stringify(fileNames),
+            encrypted_file_path: JSON.stringify(filePaths),
+            iv: JSON.stringify(fileIvs),
+            timer_days: timerDays,
+            safety_score: calculateScore(),
+            instructions: instructions,
+            category: category
+          })
+          .select()
+          .single();
+
+        if (vaultError) throw vaultError;
+        vaultDataId = vaultData.id;
+
+        // 4. Save RSA-Encrypted Trustee Shards in database (Zero-Knowledge)
+        setStatusMessage('Deploying encrypted key shards to trustee registry...');
+        const shardData1 = JSON.stringify({
+          publicKeyJWK: trusteeKeys[1].publicKeyJWK,
+          encryptedShards: [encryptedShards[0].hex]
+        });
+        const shardData2 = JSON.stringify({
+          publicKeyJWK: trusteeKeys[2].publicKeyJWK,
+          encryptedShards: [encryptedShards[1].hex]
+        });
+        const shardData3 = JSON.stringify({
+          publicKeyJWK: trusteeKeys[3].publicKeyJWK,
+          encryptedShards: [encryptedShards[2].hex]
+        });
+
+        const { error: trusteesError } = await supabase
+          .from('trustees')
+          .insert([
+            { vault_id: vaultDataId, name: t1Name, email: t1Email, shard: shardData1, shard_index: 1 },
+            { vault_id: vaultDataId, name: t2Name, email: t2Email, shard: shardData2, shard_index: 2 },
+            { vault_id: vaultDataId, name: t3Name, email: t3Email, shard: shardData3, shard_index: 3 }
+          ]);
+
+        if (trusteesError) throw trusteesError;
+      }
 
       setStatusMessage('Verification checks complete. Vault sealed successfully.');
       setTimeout(() => {
@@ -477,32 +608,40 @@ export default function Setup() {
                       className="bg-white/[0.02] border border-white/5 p-4 rounded-xl flex flex-col gap-3 mt-2"
                     >
                       <span className="text-[10px] text-white/80 font-bold uppercase tracking-wider block">
-                        🔑 Prototype key shares ready:
+                        🔑 Key distribution status:
                       </span>
-                      <p className="text-[10px] text-textMuted font-light leading-relaxed">
-                        To test the local decryption pipeline later, download the key files and payload below:
-                      </p>
+                      {useExistingKeys ? (
+                        <p className="text-[10px] text-forestGreen font-bold leading-relaxed uppercase">
+                          ✓ Re-using existing trustee key files. Your trustees will not need to download new files.
+                        </p>
+                      ) : (
+                        <>
+                          <p className="text-[10px] text-textMuted font-light leading-relaxed">
+                            To test the local decryption pipeline later, download the key files and payload below:
+                          </p>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <button
-                          onClick={() => downloadShard(1, encryptedShards[0].hex, encryptedShards[0].privateKeyJWK, t1Name)}
-                          className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] text-white flex items-center justify-center gap-1.5 cursor-pointer uppercase transition-colors"
-                        >
-                          <Download className="w-3 h-3" /> Share 1 ({t1Name.split(' ')[0]})
-                        </button>
-                        <button
-                          onClick={() => downloadShard(2, encryptedShards[1].hex, encryptedShards[1].privateKeyJWK, t2Name)}
-                          className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] text-white flex items-center justify-center gap-1.5 cursor-pointer uppercase transition-colors"
-                        >
-                          <Download className="w-3 h-3" /> Share 2 ({t2Name.split(' ')[0]})
-                        </button>
-                        <button
-                          onClick={() => downloadShard(3, encryptedShards[2].hex, encryptedShards[2].privateKeyJWK, t3Name)}
-                          className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] text-white flex items-center justify-center gap-1.5 cursor-pointer uppercase transition-colors"
-                        >
-                          <Download className="w-3 h-3" /> Share 3 ({t3Name.split(' ')[0]})
-                        </button>
-                      </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <button
+                              onClick={() => downloadShard(1, encryptedShards[0].hex, encryptedShards[0].privateKeyJWK, t1Name)}
+                              className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] text-white flex items-center justify-center gap-1.5 cursor-pointer uppercase transition-colors"
+                            >
+                              <Download className="w-3 h-3" /> Share 1 ({t1Name.split(' ')[0]})
+                            </button>
+                            <button
+                              onClick={() => downloadShard(2, encryptedShards[1].hex, encryptedShards[1].privateKeyJWK, t2Name)}
+                              className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] text-white flex items-center justify-center gap-1.5 cursor-pointer uppercase transition-colors"
+                            >
+                              <Download className="w-3 h-3" /> Share 2 ({t2Name.split(' ')[0]})
+                            </button>
+                            <button
+                              onClick={() => downloadShard(3, encryptedShards[2].hex, encryptedShards[2].privateKeyJWK, t3Name)}
+                              className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-[9px] text-white flex items-center justify-center gap-1.5 cursor-pointer uppercase transition-colors"
+                            >
+                              <Download className="w-3.5 h-3.5" /> Share 3 ({t3Name.split(' ')[0]})
+                            </button>
+                          </div>
+                        </>
+                      )}
 
                       <button
                         onClick={downloadEncryptedPayload}

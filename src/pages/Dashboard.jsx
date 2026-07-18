@@ -35,6 +35,7 @@ export default function Dashboard() {
   const [trustees, setTrustees] = useState([]);
   const [pingingId, setPingingId] = useState(null);
   const [alertBanner, setAlertBanner] = useState(null); // 'rohan_offline' | null
+  const [successMessage, setSuccessMessage] = useState(null);
 
   // Fetch profile, active vault, and trustees
   useEffect(() => {
@@ -289,6 +290,11 @@ export default function Dashboard() {
         `✓ Proof of Life check-in triggered: switch timer reset to ${activeVault.timer_days} days remaining.`
       ]);
 
+      setSuccessMessage(`File "${file.name}" successfully added to your secure sealed vault!`);
+      setTimeout(() => {
+        setSuccessMessage(null);
+      }, 5000);
+
     } catch (err) {
       console.error("Add file failed:", err);
       setLogs((prev) => [...prev, `Error adding file: ${err.message}`]);
@@ -397,6 +403,21 @@ export default function Dashboard() {
         
         {/* LEFT COLUMN: COUNTDOWN RING & TELEMETRY */}
         <div className="lg:col-span-8 flex flex-col gap-6">
+          <AnimatePresence>
+            {successMessage && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="bg-forestGreen/10 border border-forestGreen/30 p-4 rounded-xl text-left text-xs text-forestGreen flex items-center gap-2.5 shadow-[0_0_20px_rgba(16,185,129,0.05)]"
+              >
+                <CheckCircle className="w-4 h-4 text-forestGreen shrink-0" />
+                <div className="font-sans font-semibold uppercase tracking-wider text-[11px]">
+                  {successMessage}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
           
           {/* Main Vault Switch widget */}
           <div className="bg-[#08080B]/85 border border-white/5 rounded-2xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-around gap-6 glass-panel relative overflow-hidden shadow-[0_0_50px_rgba(255,255,255,0.015)] glint-effect">
